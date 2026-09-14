@@ -5,8 +5,8 @@ trusted Apple devices on an approved local network. A host app can act as a call
 worker, or a combination of those roles.
 
 > Status: experimental `0.1.0` development. `InferPeerProtocol`, `InferPeerInference`,
-> `InferPeerCore`, and `InferPeerStorage` are implemented; the remaining products are scaffolds
-> rather than completed capabilities.
+> `InferPeerCore`, `InferPeerStorage`, and `InferPeerSecurity` are implemented; the remaining
+> products are scaffolds rather than completed capabilities.
 
 ## Package structure
 
@@ -52,5 +52,5 @@ The language-neutral schema lives in `Protos/inferpeer/v1`. Regenerate its commi
 with `make generate-protocol`; the command builds the matching generator from the resolved
 SwiftProtobuf dependency.
 
-The next module is `InferPeerSecurity`. The M0 compatibility spike must also validate gRPC over
-mutual TLS on the target Apple platforms and run one local MLX text model offline.
+The next module is `InferPeerGRPC`. Its M0 compatibility spike must validate gRPC over mutual TLS
+on the target Apple platforms. M0 must also run one local MLX text model offline.

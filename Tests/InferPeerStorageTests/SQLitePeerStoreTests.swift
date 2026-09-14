@@ -62,4 +62,20 @@ struct SQLitePeerStoreTests {
         try await store.forget(peerID: identity.peerID)
         #expect(try await store.membership(peerID: identity.peerID) == nil)
     }
+
+    @Test("Implements Core's durable trust contract")
+    func implementsTrustRepository() async throws {
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        let store = try testDatabase.makePeerStore()
+        defer { try? store.close() }
+        let repository: any PeerTrustRepository = store
+        let identity = try makePeerIdentity()
+
+        try await repository.recordApproval(identity, roles: [.worker])
+        #expect(try await repository.trustRecord(peerID: identity.peerID)?.identity == identity)
+
+        try await repository.recordRevocation(peerID: identity.peerID)
+        #expect(try await repository.trustRecord(peerID: identity.peerID)?.revokedAt != nil)
+    }
 }

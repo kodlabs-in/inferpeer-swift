@@ -29,6 +29,14 @@ let package = Package(
             url: "https://github.com/groue/GRDB.swift.git",
             .upToNextMinor(from: "7.10.0")
         ),
+        .package(
+            url: "https://github.com/apple/swift-certificates.git",
+            .upToNextMinor(from: "1.19.4")
+        ),
+        .package(
+            url: "https://github.com/apple/swift-crypto.git",
+            .upToNextMinor(from: "4.5.1")
+        ),
     ],
     targets: [
         .target(
@@ -65,7 +73,11 @@ let package = Package(
         ),
         .target(
             name: "InferPeerSecurity",
-            dependencies: ["InferPeerCore"]
+            dependencies: [
+                "InferPeerCore",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "X509", package: "swift-certificates"),
+            ]
         ),
         .target(
             name: "InferPeerTelemetry",
@@ -124,6 +136,14 @@ let package = Package(
                 "InferPeerInference",
                 "InferPeerProtocol",
                 .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .testTarget(
+            name: "InferPeerSecurityTests",
+            dependencies: [
+                "InferPeerSecurity",
+                "InferPeerCore",
+                "InferPeerProtocol",
             ]
         ),
     ]
