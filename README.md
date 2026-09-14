@@ -1,0 +1,56 @@
+# InferPeer
+
+InferPeer is an experimental Swift package for distributing private, text-only inference across
+trusted Apple devices on an approved local network. A host app can act as a caller, coordinator,
+worker, or a combination of those roles.
+
+> Status: package scaffold for the `0.1.0` demo. The capabilities described in the product
+> documents are requirements, not completed features.
+
+## Package structure
+
+This repository publishes one Swift package, `inferpeer-swift`, with ten library products:
+
+1. `InferPeerProtocol`
+2. `InferPeerInference`
+3. `InferPeerCore`
+4. `InferPeerStorage`
+5. `InferPeerSecurity`
+6. `InferPeerGRPC`
+7. `InferPeerDiscovery`
+8. `InferPeerTelemetry`
+9. `InferPeerMLX`
+10. `InferPeer`
+
+Implementation proceeds in that dependency-aware order. `InferPeerMLX` remains opt-in so a
+caller-only consumer does not link the MLX runtime.
+
+## Requirements
+
+- Swift 6.1 or later
+- macOS 15 or later, or iOS/iPadOS 18 or later
+- `swift-format` and `SwiftLint` for local quality checks
+
+Install the development tools with Homebrew:
+
+```sh
+brew install swift-format swiftlint
+```
+
+Run the complete local check suite:
+
+```sh
+make check
+```
+
+Use `make format`, `make lint`, `make build`, or `make test` for individual tasks. The lint policy
+warns when cyclomatic complexity exceeds 10 and fails when it exceeds 15.
+
+## Project documents
+
+- [Product requirements](../PRD.md)
+- [Technical stack](../TECH_STACK.md)
+- [Vision](../VISION.md)
+
+The next milestone is the M0 compatibility spike: pin released dependencies, validate gRPC over
+mutual TLS on the target Apple platforms, and run one local MLX text model offline.
