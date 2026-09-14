@@ -43,6 +43,17 @@ struct CallerRequestLifecycleTests {
         #expect(completed.phase == .terminal(.completed))
     }
 
+    @Test("Applies coordinator cancellation progress")
+    func appliesCoordinatorCancellation() throws {
+        var lifecycle = try acceptedLifecycle()
+        #expect(lifecycle.requestCancellation() == .pending)
+
+        try lifecycle.applyCancellation(.confirmed)
+
+        #expect(lifecycle.cancellationState == .confirmed)
+        #expect(lifecycle.phase == .terminal(.cancelled))
+    }
+
     private func acceptedLifecycle() throws -> CallerRequestLifecycle {
         var lifecycle = try makeLifecycle()
         try lifecycle.markSubmitted()

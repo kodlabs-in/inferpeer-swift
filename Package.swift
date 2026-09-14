@@ -57,6 +57,18 @@ let package = Package(
             url: "https://github.com/apple/swift-nio-ssl.git",
             .upToNextMinor(from: "2.37.4")
         ),
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift.git",
+            .upToNextMinor(from: "0.31.6")
+        ),
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift-lm.git",
+            .upToNextMajor(from: "3.31.4")
+        ),
+        .package(
+            url: "https://github.com/huggingface/swift-transformers.git",
+            .upToNextMinor(from: "1.3.3")
+        ),
     ],
     targets: [
         .target(
@@ -113,21 +125,32 @@ let package = Package(
         ),
         .target(
             name: "InferPeerTelemetry",
-            dependencies: ["InferPeerCore"]
+            dependencies: ["InferPeerCore", "InferPeerInference", "InferPeerProtocol"]
         ),
         .target(
             name: "InferPeerMLX",
-            dependencies: ["InferPeerInference"]
+            dependencies: [
+                "InferPeerInference",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+            ]
         ),
         .target(
             name: "InferPeer",
             dependencies: [
                 "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
                 "InferPeerGRPC",
                 "InferPeerStorage",
                 "InferPeerDiscovery",
                 "InferPeerSecurity",
                 "InferPeerTelemetry",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
         ),
         .testTarget(
@@ -186,6 +209,29 @@ let package = Package(
                 "InferPeerProtocol",
                 "InferPeerSecurity",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
+            ]
+        ),
+        .testTarget(
+            name: "InferPeerDiscoveryTests",
+            dependencies: ["InferPeerDiscovery", "InferPeerCore"]
+        ),
+        .testTarget(
+            name: "InferPeerTelemetryTests",
+            dependencies: ["InferPeerTelemetry", "InferPeerCore", "InferPeerInference"]
+        ),
+        .testTarget(
+            name: "InferPeerMLXTests",
+            dependencies: ["InferPeerMLX", "InferPeerInference", "InferPeerProtocol"]
+        ),
+        .testTarget(
+            name: "InferPeerFacadeTests",
+            dependencies: [
+                "InferPeer",
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
+                "InferPeerStorage",
+                "InferPeerTelemetry",
             ]
         ),
     ]

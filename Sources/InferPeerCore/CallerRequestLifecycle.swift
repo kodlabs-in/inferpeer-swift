@@ -123,6 +123,15 @@ public struct CallerRequestLifecycle: Equatable, Sendable {
         acknowledgedEventCursor = eventCursor
     }
 
+    /// Applies cancellation progress reported by the coordinator.
+    public mutating func applyCancellation(_ state: CancellationState) throws {
+        guard canRemoveFromOutbox else { throw CallerRequestTransitionError.invalidPhase }
+        cancellationState = state
+        if state == .confirmed {
+            phase = .terminal(.cancelled)
+        }
+    }
+
     /// Requests cancellation locally or marks a submitted request as pending cancellation.
     @discardableResult
     public mutating func requestCancellation() -> CancellationState {
