@@ -5,8 +5,8 @@ trusted Apple devices on an approved local network. A host app can act as a call
 worker, or a combination of those roles.
 
 > Status: experimental `0.1.0` development. `InferPeerProtocol`, `InferPeerInference`,
-> `InferPeerCore`, `InferPeerStorage`, and `InferPeerSecurity` are implemented; the remaining
-> products are scaffolds rather than completed capabilities.
+> `InferPeerCore`, `InferPeerStorage`, `InferPeerSecurity`, and `InferPeerGRPC` are implemented;
+> the remaining products are scaffolds rather than completed capabilities.
 
 ## Package structure
 
@@ -49,8 +49,14 @@ Use `make format`, `make lint`, `make build`, or `make test` for individual task
 warns when cyclomatic complexity exceeds 10 and fails when it exceeds 15.
 
 The language-neutral schema lives in `Protos/inferpeer/v1`. Regenerate its committed Swift types
-with `make generate-protocol`; the command builds the matching generator from the resolved
-SwiftProtobuf dependency.
+and gRPC service bindings with `make generate-protocol`; the command builds matching generators
+from the resolved SwiftProtobuf and gRPC Swift Protobuf dependencies.
 
-The next module is `InferPeerGRPC`. Its M0 compatibility spike must validate gRPC over mutual TLS
-on the target Apple platforms. M0 must also run one local MLX text model offline.
+`InferPeerGRPC` supplies the concrete gRPC Swift 2 transport for caller and worker sessions. It
+uses HTTP/2 over mutually authenticated TLS, endpoint-specific coordinator certificate pins,
+certificate-bound peer authorization, protocol negotiation, ordered message metadata, explicit
+interface and endpoint allowlists, message-size limits, and bounded streams that fail instead of
+silently dropping messages. Integration tests exercise real TCP and TLS on macOS loopback.
+
+The next module is `InferPeerDiscovery`. Physical iPhone and iPad transport validation remains a
+sandbox-app milestone because a Swift package cannot by itself be installed and run on a device.

@@ -3,6 +3,8 @@ SWIFTPM_MODULECACHE_OVERRIDE := $(CURDIR)/.build/ModuleCache
 CLANG_MODULE_CACHE_PATH := $(SWIFTPM_MODULECACHE_OVERRIDE)
 PROTOC_GEN_SWIFT := $(CURDIR)/.build/protobuf-tools/release/protoc-gen-swift
 SWIFT_PROTOBUF_CHECKOUT := $(CURDIR)/.build/checkouts/swift-protobuf
+PROTOC_GEN_GRPC_SWIFT := $(CURDIR)/.build/grpc-protobuf-tools/release/protoc-gen-grpc-swift-2
+GRPC_PROTOBUF_CHECKOUT := $(CURDIR)/.build/checkouts/grpc-swift-protobuf
 
 export SWIFTPM_MODULECACHE_OVERRIDE
 export CLANG_MODULE_CACHE_PATH
@@ -30,6 +32,7 @@ check: lint build test
 protobuf-tools:
 	swift package resolve
 	swift build --package-path $(SWIFT_PROTOBUF_CHECKOUT) --scratch-path $(CURDIR)/.build/protobuf-tools --configuration release --product protoc-gen-swift
+	swift build --package-path $(GRPC_PROTOBUF_CHECKOUT) --scratch-path $(CURDIR)/.build/grpc-protobuf-tools --configuration release --product protoc-gen-grpc-swift-2
 
 generate-protocol: protobuf-tools
 	buf generate

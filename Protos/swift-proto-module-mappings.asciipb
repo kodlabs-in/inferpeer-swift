@@ -1,0 +1,8 @@
+mapping {
+  module_name: "InferPeerProtocol"
+  proto_file_path: "inferpeer/v1/common.proto"
+  proto_file_path: "inferpeer/v1/handshake.proto"
+  proto_file_path: "inferpeer/v1/inference.proto"
+  proto_file_path: "inferpeer/v1/session.proto"
+  proto_file_path: "inferpeer/v1/status.proto"
+}

@@ -7,5 +7,12 @@ plugins:
       - FileNaming=FullPath
       - Visibility=Public
       - UseAccessLevelOnImports=true
+  - local: .build/grpc-protobuf-tools/release/protoc-gen-grpc-swift-2
+    out: Sources/InferPeerGRPC/Generated
+    opt:
+      - FileNaming=FullPath
+      - Visibility=Public
+      - ProtoPathModuleMappings=Protos/swift-proto-module-mappings.asciipb
+      - UseAccessLevelOnImports=true
 inputs:
   - directory: Protos

@@ -37,6 +37,26 @@ let package = Package(
             url: "https://github.com/apple/swift-crypto.git",
             .upToNextMinor(from: "4.5.1")
         ),
+        .package(
+            url: "https://github.com/grpc/grpc-swift-2.git",
+            .upToNextMinor(from: "2.4.3")
+        ),
+        .package(
+            url: "https://github.com/grpc/grpc-swift-nio-transport.git",
+            .upToNextMinor(from: "2.9.2")
+        ),
+        .package(
+            url: "https://github.com/grpc/grpc-swift-protobuf.git",
+            .upToNextMinor(from: "2.4.1")
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio.git",
+            .upToNextMinor(from: "2.102.0")
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio-ssl.git",
+            .upToNextMinor(from: "2.37.4")
+        ),
     ],
     targets: [
         .target(
@@ -55,7 +75,19 @@ let package = Package(
         ),
         .target(
             name: "InferPeerGRPC",
-            dependencies: ["InferPeerCore", "InferPeerProtocol"]
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerProtocol",
+                .product(name: "GRPCCore", package: "grpc-swift-2"),
+                .product(
+                    name: "GRPCNIOTransportHTTP2Posix",
+                    package: "grpc-swift-nio-transport"
+                ),
+                .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "X509", package: "swift-certificates"),
+            ]
         ),
         .target(
             name: "InferPeerStorage",
@@ -144,6 +176,16 @@ let package = Package(
                 "InferPeerSecurity",
                 "InferPeerCore",
                 "InferPeerProtocol",
+            ]
+        ),
+        .testTarget(
+            name: "InferPeerGRPCTests",
+            dependencies: [
+                "InferPeerGRPC",
+                "InferPeerCore",
+                "InferPeerProtocol",
+                "InferPeerSecurity",
+                .product(name: "GRPCCore", package: "grpc-swift-2"),
             ]
         ),
     ]
