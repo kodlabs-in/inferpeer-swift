@@ -65,6 +65,21 @@ public struct ActiveAttempt: Hashable, Sendable {
 
     /// The local monotonic deadline after which this lease is invalid.
     public let leaseDeadline: MonotonicInstant
+
+    /// Creates an active coordinator-owned attempt snapshot.
+    public init(
+        attemptID: AttemptID,
+        workerID: PeerID,
+        number: UInt32,
+        coordinatorIncarnationID: CoordinatorIncarnationID,
+        leaseDeadline: MonotonicInstant
+    ) {
+        self.attemptID = attemptID
+        self.workerID = workerID
+        self.number = number
+        self.coordinatorIncarnationID = coordinatorIncarnationID
+        self.leaseDeadline = leaseDeadline
+    }
 }
 
 /// The result of racing a terminal request transition against an earlier terminal commit.
@@ -94,6 +109,21 @@ public enum RequestTransitionError: Error, Equatable, Sendable {
     case cancellationNotPending
 }
 
+/// A malformed durable lifecycle snapshot that Core refuses to restore.
+public enum RequestLifecycleSnapshotError: Error, Equatable, Sendable {
+    /// Assigned and running requests require one active attempt.
+    case activeAttemptRequired
+
+    /// Queued and terminal requests cannot retain an active attempt.
+    case activeAttemptNotAllowed
+
+    /// The active attempt number differs from the request attempt counter.
+    case attemptNumberMismatch
+
+    /// The cancellation state is incompatible with the request state.
+    case invalidCancellationState
+}
+
 /// The authoritative pure state machine for one coordinator-owned request.
 public struct RequestLifecycle: Equatable, Sendable {
     /// The current durable request state.
@@ -114,6 +144,25 @@ public struct RequestLifecycle: Equatable, Sendable {
         attemptNumber = 0
         activeAttempt = nil
         cancellationState = .notRequested
+    }
+
+    /// Restores a validated lifecycle previously committed by a durable store.
+    public init(
+        restoring state: RequestState,
+        attemptNumber: UInt32,
+        activeAttempt: ActiveAttempt?,
+        cancellationState: CancellationState
+    ) throws {
+        try Self.validateAttempt(
+            for: state,
+            attemptNumber: attemptNumber,
+            activeAttempt: activeAttempt
+        )
+        try Self.validateCancellation(cancellationState, for: state)
+        self.state = state
+        self.attemptNumber = attemptNumber
+        self.activeAttempt = activeAttempt
+        self.cancellationState = cancellationState
     }
 
     /// Assigns the queued request to one worker under a new attempt lease.
@@ -216,6 +265,43 @@ public struct RequestLifecycle: Equatable, Sendable {
     private func requireState(_ expected: [RequestState]) throws {
         guard expected.contains(state) else {
             throw RequestTransitionError.invalidState(expected: expected, actual: state)
+        }
+    }
+
+    private static func validateAttempt(
+        for state: RequestState,
+        attemptNumber: UInt32,
+        activeAttempt: ActiveAttempt?
+    ) throws {
+        if state == .assigned || state == .running {
+            guard let activeAttempt else {
+                throw RequestLifecycleSnapshotError.activeAttemptRequired
+            }
+            guard activeAttempt.number == attemptNumber else {
+                throw RequestLifecycleSnapshotError.attemptNumberMismatch
+            }
+            return
+        }
+        guard activeAttempt == nil else {
+            throw RequestLifecycleSnapshotError.activeAttemptNotAllowed
+        }
+    }
+
+    private static func validateCancellation(
+        _ cancellationState: CancellationState,
+        for state: RequestState
+    ) throws {
+        if cancellationState == .pending,
+            state != .assigned,
+            state != .running
+        {
+            throw RequestLifecycleSnapshotError.invalidCancellationState
+        }
+        if cancellationState == .confirmed, state != .cancelled {
+            throw RequestLifecycleSnapshotError.invalidCancellationState
+        }
+        if cancellationState == .tooLate, !state.isTerminal {
+            throw RequestLifecycleSnapshotError.invalidCancellationState
         }
     }
 

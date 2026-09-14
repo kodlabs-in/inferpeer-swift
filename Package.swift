@@ -24,7 +24,11 @@ let package = Package(
         .package(
             url: "https://github.com/apple/swift-protobuf.git",
             .upToNextMinor(from: "1.38.1")
-        )
+        ),
+        .package(
+            url: "https://github.com/groue/GRDB.swift.git",
+            .upToNextMinor(from: "7.10.0")
+        ),
     ],
     targets: [
         .target(
@@ -47,7 +51,13 @@ let package = Package(
         ),
         .target(
             name: "InferPeerStorage",
-            dependencies: ["InferPeerCore"]
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            ]
         ),
         .target(
             name: "InferPeerDiscovery",
@@ -105,6 +115,16 @@ let package = Package(
         .testTarget(
             name: "InferPeerCoreTests",
             dependencies: ["InferPeerCore", "InferPeerInference", "InferPeerProtocol"]
+        ),
+        .testTarget(
+            name: "InferPeerStorageTests",
+            dependencies: [
+                "InferPeerStorage",
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
         ),
     ]
 )

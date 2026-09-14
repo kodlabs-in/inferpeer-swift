@@ -86,6 +86,52 @@ struct RequestLifecycleTests {
         #expect(lifecycle.expire() == .alreadyTerminal(.expired))
     }
 
+    @Test("Restores only internally consistent durable snapshots")
+    func validatesRestoredSnapshot() throws {
+        let attempt = try ActiveAttempt(
+            attemptID: #require(AttemptID(rawValue: "attempt-1")),
+            workerID: #require(PeerID(rawValue: "worker-1")),
+            number: 1,
+            coordinatorIncarnationID: #require(
+                CoordinatorIncarnationID(rawValue: "coordinator-run-1")
+            ),
+            leaseDeadline: MonotonicInstant(nanoseconds: 20)
+        )
+
+        let restored = try RequestLifecycle(
+            restoring: .running,
+            attemptNumber: 1,
+            activeAttempt: attempt,
+            cancellationState: .pending
+        )
+
+        #expect(restored.activeAttempt == attempt)
+        #expect(throws: RequestLifecycleSnapshotError.activeAttemptRequired) {
+            try RequestLifecycle(
+                restoring: .running,
+                attemptNumber: 1,
+                activeAttempt: nil,
+                cancellationState: .notRequested
+            )
+        }
+        #expect(throws: RequestLifecycleSnapshotError.activeAttemptNotAllowed) {
+            try RequestLifecycle(
+                restoring: .queued,
+                attemptNumber: 1,
+                activeAttempt: attempt,
+                cancellationState: .notRequested
+            )
+        }
+        #expect(throws: RequestLifecycleSnapshotError.invalidCancellationState) {
+            try RequestLifecycle(
+                restoring: .completed,
+                attemptNumber: 1,
+                activeAttempt: nil,
+                cancellationState: .pending
+            )
+        }
+    }
+
     private func runningLifecycle(attemptID: AttemptID) throws -> RequestLifecycle {
         var lifecycle = RequestLifecycle()
         _ = try lifecycle.assign(
