@@ -102,5 +102,9 @@ let package = Package(
             name: "InferPeerInferenceTests",
             dependencies: ["InferPeerInference", "InferPeerProtocol"]
         ),
+        .testTarget(
+            name: "InferPeerCoreTests",
+            dependencies: ["InferPeerCore", "InferPeerInference", "InferPeerProtocol"]
+        ),
     ]
 )
