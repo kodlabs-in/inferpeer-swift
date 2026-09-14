@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package inferpeer.v1;
+
+import "inferpeer/v1/inference.proto";
+
+option swift_prefix = "InferPeer_V1_";
+
+// ParticipationState is the host-controlled admission state for a node.
+enum ParticipationState {
+  PARTICIPATION_STATE_UNSPECIFIED = 0;
+  PARTICIPATION_STATE_AVAILABLE = 1;
+  PARTICIPATION_STATE_DRAINING = 2;
+  PARTICIPATION_STATE_UNAVAILABLE = 3;
+}
+
+// ThermalState is a portable representation of an available OS thermal signal.
+enum ThermalState {
+  THERMAL_STATE_UNSPECIFIED = 0;
+  THERMAL_STATE_UNKNOWN = 1;
+  THERMAL_STATE_NOMINAL = 2;
+  THERMAL_STATE_FAIR = 3;
+  THERMAL_STATE_SERIOUS = 4;
+  THERMAL_STATE_CRITICAL = 5;
+}
+
+// ModelStatus reports whether a registered model is loaded and its measured costs.
+message ModelStatus {
+  ModelReference model = 1;
+  bool loaded = 2;
+  optional uint64 measured_memory_bytes = 3;
+  optional uint64 estimated_load_milliseconds = 4;
+
+  reserved 5 to 9;
+}
+
+// WorkerStatus reports only metrics available to the host application.
+message WorkerStatus {
+  ParticipationState participation = 1;
+  optional uint64 available_app_memory_bytes = 2;
+  ThermalState thermal_state = 3;
+  optional bool low_power_mode_enabled = 4;
+  optional uint32 battery_percent = 5;
+  uint32 active_generations = 6;
+  uint32 generation_capacity = 7;
+  repeated ModelStatus models = 8;
+
+  reserved 9 to 19;
+}

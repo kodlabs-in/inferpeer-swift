@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package inferpeer.v1;
+
+import "inferpeer/v1/common.proto";
+
+option swift_prefix = "InferPeer_V1_";
+
+// MessageRole identifies how a text message participates in a prompt.
+enum MessageRole {
+  MESSAGE_ROLE_UNSPECIFIED = 0;
+  MESSAGE_ROLE_SYSTEM = 1;
+  MESSAGE_ROLE_USER = 2;
+  MESSAGE_ROLE_ASSISTANT = 3;
+}
+
+// RuntimeFormat identifies a model runtime representation.
+enum RuntimeFormat {
+  RUNTIME_FORMAT_UNSPECIFIED = 0;
+  RUNTIME_FORMAT_MLX = 1;
+}
+
+// FinishReason explains why generation reached a terminal result.
+enum FinishReason {
+  FINISH_REASON_UNSPECIFIED = 0;
+  FINISH_REASON_STOP = 1;
+  FINISH_REASON_MAXIMUM_TOKENS = 2;
+}
+
+// TextMessage is one ordered item in a complete conversation snapshot.
+message TextMessage {
+  MessageRole role = 1;
+  string text = 2;
+}
+
+// SamplingOptions contains explicitly requested text-generation controls.
+message SamplingOptions {
+  optional double temperature = 1;
+  optional double top_p = 2;
+  optional uint64 seed = 3;
+
+  reserved 4 to 9;
+}
+
+// ModelReference identifies one exact model revision.
+message ModelReference {
+  string model_id = 1;
+  string revision = 2;
+}
+
+// PermittedModelSet is an explicit set from which scheduling may choose.
+message PermittedModelSet {
+  repeated ModelReference models = 1;
+}
+
+// ModelRequirement prevents a scheduler from silently downgrading model quality.
+message ModelRequirement {
+  oneof selector {
+    ModelReference exact_model = 1;
+    PermittedModelSet permitted_models = 2;
+  }
+
+  reserved 3 to 9;
+}
+
+// ModelDescriptor records immutable model identity and runtime metadata.
+message ModelDescriptor {
+  ModelReference reference = 1;
+  RuntimeFormat runtime_format = 2;
+  string quantization = 3;
+  string tokenizer = 4;
+  string chat_template = 5;
+  uint32 context_token_limit = 6;
+  string license = 7;
+  bytes content_sha256 = 8;
+  optional uint64 measured_memory_bytes = 9;
+
+  reserved 10 to 19;
+}
+
+// TextRequest is an immutable, bounded context snapshot for one generation.
+message TextRequest {
+  string conversation_id = 1;
+  uint64 context_revision = 2;
+  repeated TextMessage messages = 3;
+  ModelRequirement model_requirement = 4;
+  uint32 maximum_output_tokens = 5;
+  SamplingOptions sampling = 6;
+  optional int64 deadline_unix_milliseconds = 7;
+  repeated string allowed_worker_ids = 8;
+
+  reserved 9 to 19;
+}
+
+// TokenUsage records the measured token counts for a completed generation.
+message TokenUsage {
+  uint32 prompt_tokens = 1;
+  uint32 output_tokens = 2;
+}
+
+// TextDelta carries one ordered, nonempty fragment of generated text.
+message TextDelta {
+  string text = 1;
+}
+
+// GenerationCompleted is the single accepted final result for an attempt.
+message GenerationCompleted {
+  string full_text = 1;
+  ModelReference model_used = 2;
+  FinishReason finish_reason = 3;
+  TokenUsage usage = 4;
+
+  reserved 5 to 9;
+}
+
+// GenerationInterrupted terminates an attempt without completing its logical request.
+message GenerationInterrupted {
+  ProtocolError error = 1;
+  bool will_retry = 2;
+
+  reserved 3 to 9;
+}
+
+// GenerationEvent carries replayable text progress or an attempt terminal event.
+message GenerationEvent {
+  oneof payload {
+    TextDelta text_delta = 1;
+    GenerationCompleted completed = 2;
+    GenerationInterrupted interrupted = 3;
+  }
+
+  reserved 4 to 9;
+}

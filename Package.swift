@@ -20,8 +20,19 @@ let package = Package(
         .library(name: "InferPeerMLX", targets: ["InferPeerMLX"]),
         .library(name: "InferPeer", targets: ["InferPeer"]),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/apple/swift-protobuf.git",
+            .upToNextMinor(from: "1.38.1")
+        )
+    ],
     targets: [
-        .target(name: "InferPeerProtocol"),
+        .target(
+            name: "InferPeerProtocol",
+            dependencies: [
+                .product(name: "SwiftProtobuf", package: "swift-protobuf")
+            ]
+        ),
         .target(
             name: "InferPeerInference",
             dependencies: ["InferPeerProtocol"]
@@ -78,6 +89,13 @@ let package = Package(
                 "InferPeerSecurity",
                 "InferPeerTelemetry",
                 "InferPeerMLX",
+            ]
+        ),
+        .testTarget(
+            name: "InferPeerProtocolTests",
+            dependencies: [
+                "InferPeerProtocol",
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
         ),
     ]

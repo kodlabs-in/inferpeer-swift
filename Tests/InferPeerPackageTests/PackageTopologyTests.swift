@@ -14,7 +14,7 @@ import Testing
 func allLibraryModulesAreImportable() {
     let modules: [Any.Type] = [
         InferPeerModule.self,
-        InferPeerProtocolModule.self,
+        InferPeerProtocolVersion.self,
         InferPeerInferenceModule.self,
         InferPeerCoreModule.self,
         InferPeerGRPCModule.self,

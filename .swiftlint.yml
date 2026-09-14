@@ -6,8 +6,13 @@ included:
 excluded:
   - .build
   - .swiftpm
+  - Sources/InferPeerProtocol/Generated
 
 strict: true
+
+disabled_rules:
+  - opening_brace
+  - trailing_comma
 
 opt_in_rules:
   - async_without_await
@@ -62,8 +67,5 @@ line_length:
 type_body_length:
   warning: 250
   error: 350
-
-trailing_comma:
-  mandatory_comma: true
 
 reporter: xcode

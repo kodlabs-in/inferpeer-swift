@@ -1,0 +1,194 @@
+syntax = "proto3";
+
+package inferpeer.v1;
+
+import "inferpeer/v1/common.proto";
+import "inferpeer/v1/handshake.proto";
+import "inferpeer/v1/inference.proto";
+import "inferpeer/v1/status.proto";
+
+option swift_prefix = "InferPeer_V1_";
+
+// RequestState is the durable lifecycle of one logical inference request.
+enum RequestState {
+  REQUEST_STATE_UNSPECIFIED = 0;
+  REQUEST_STATE_QUEUED = 1;
+  REQUEST_STATE_ASSIGNED = 2;
+  REQUEST_STATE_RUNNING = 3;
+  REQUEST_STATE_COMPLETED = 4;
+  REQUEST_STATE_FAILED = 5;
+  REQUEST_STATE_CANCELLED = 6;
+  REQUEST_STATE_EXPIRED = 7;
+}
+
+// CancellationState distinguishes a durable request from confirmed execution cancellation.
+enum CancellationState {
+  CANCELLATION_STATE_UNSPECIFIED = 0;
+  CANCELLATION_STATE_PENDING = 1;
+  CANCELLATION_STATE_CONFIRMED = 2;
+  CANCELLATION_STATE_TOO_LATE = 3;
+}
+
+// SubmitCommand submits an immutable request snapshot under the metadata request ID.
+message SubmitCommand {
+  TextRequest request = 1;
+  bytes immutable_input_sha256 = 2;
+
+  reserved 3 to 9;
+}
+
+// CancelCommand durably requests cancellation of the metadata request ID.
+message CancelCommand {
+  optional string reason = 1;
+
+  reserved 2 to 9;
+}
+
+// ResumeCommand requests replay after the last durable coordinator cursor observed by a caller.
+message ResumeCommand {
+  uint64 after_event_cursor = 1;
+
+  reserved 2 to 9;
+}
+
+// AcknowledgeEventsCommand records the caller's durable replay position.
+message AcknowledgeEventsCommand {
+  uint64 through_event_cursor = 1;
+
+  reserved 2 to 9;
+}
+
+// RequestAccepted confirms that a coordinator committed a logical request before acknowledging it.
+message RequestAccepted {
+  RequestState state = 1;
+
+  reserved 2 to 9;
+}
+
+// RequestStateChanged reports a durable request transition.
+message RequestStateChanged {
+  RequestState state = 1;
+  uint32 attempt_number = 2;
+
+  reserved 3 to 9;
+}
+
+// CancellationUpdated reports progress or the terminal outcome of cancellation.
+message CancellationUpdated {
+  CancellationState state = 1;
+
+  reserved 2 to 9;
+}
+
+// RequestFailed reports a terminal typed error for a logical request.
+message RequestFailed {
+  ProtocolError error = 1;
+
+  reserved 2 to 9;
+}
+
+// ClientSessionRequest carries one caller command. SessionHello must be sent first.
+message ClientSessionRequest {
+  MessageMetadata metadata = 1;
+
+  reserved 2 to 9;
+
+  oneof payload {
+    SessionHello hello = 10;
+    SubmitCommand submit = 11;
+    CancelCommand cancel = 12;
+    ResumeCommand resume = 13;
+    AcknowledgeEventsCommand acknowledge_events = 14;
+  }
+}
+
+// ClientSessionResponse carries one replayable coordinator event.
+message ClientSessionResponse {
+  MessageMetadata metadata = 1;
+
+  reserved 2 to 9;
+
+  oneof payload {
+    SessionAccepted session_accepted = 10;
+    SessionRejected session_rejected = 11;
+    RequestAccepted request_accepted = 12;
+    RequestStateChanged request_state_changed = 13;
+    GenerationEvent generation_event = 14;
+    CancellationUpdated cancellation_updated = 15;
+    RequestFailed request_failed = 16;
+  }
+}
+
+// AttemptAssignment leases one complete request snapshot to an eligible worker.
+message AttemptAssignment {
+  TextRequest request = 1;
+  uint32 attempt_number = 2;
+  uint64 lease_duration_milliseconds = 3;
+  string coordinator_incarnation_id = 4;
+
+  reserved 5 to 9;
+}
+
+// CancelAttemptCommand asks the active worker attempt to stop cooperatively.
+message CancelAttemptCommand {
+  optional string reason = 1;
+
+  reserved 2 to 9;
+}
+
+// LeaseExtended confirms the coordinator's new lease duration from receipt.
+message LeaseExtended {
+  uint64 lease_duration_milliseconds = 1;
+
+  reserved 2 to 9;
+}
+
+// AttemptAccepted confirms resource admission before generation begins.
+message AttemptAccepted {
+  reserved 1 to 9;
+}
+
+// AttemptRejected refuses stale or resource-ineligible work with a typed reason.
+message AttemptRejected {
+  ProtocolError error = 1;
+
+  reserved 2 to 9;
+}
+
+// LeaseRenewal requests more execution time for the active attempt.
+message LeaseRenewal {
+  uint64 requested_duration_milliseconds = 1;
+
+  reserved 2 to 9;
+}
+
+// WorkerSessionRequest carries one worker event. SessionHello must be sent first.
+message WorkerSessionRequest {
+  MessageMetadata metadata = 1;
+
+  reserved 2 to 9;
+
+  oneof payload {
+    SessionHello hello = 10;
+    WorkerStatus status = 11;
+    AttemptAccepted attempt_accepted = 12;
+    AttemptRejected attempt_rejected = 13;
+    LeaseRenewal lease_renewal = 14;
+    GenerationEvent generation_event = 15;
+  }
+}
+
+// WorkerSessionResponse carries one coordinator command for a worker.
+message WorkerSessionResponse {
+  MessageMetadata metadata = 1;
+
+  reserved 2 to 9;
+
+  oneof payload {
+    SessionAccepted session_accepted = 10;
+    SessionRejected session_rejected = 11;
+    AttemptAssignment assignment = 12;
+    CancelAttemptCommand cancel_attempt = 13;
+    LeaseExtended lease_extended = 14;
+  }
+}

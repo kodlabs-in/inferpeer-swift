@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package inferpeer.v1;
+
+import "inferpeer/v1/common.proto";
+
+option swift_prefix = "InferPeer_V1_";
+
+// SessionHello is the first payload sent by a caller or worker.
+message SessionHello {
+  ProtocolSupport protocol_support = 1;
+  repeated NodeRole roles = 2;
+  bytes certificate_fingerprint_sha256 = 3;
+  optional string invitation_id = 4;
+  optional bytes invitation_proof = 5;
+
+  reserved 6 to 9;
+}
+
+// SessionAccepted confirms authentication and protocol negotiation.
+message SessionAccepted {
+  NegotiatedProtocol negotiated_protocol = 1;
+  string coordinator_incarnation_id = 2;
+
+  reserved 3 to 9;
+}
+
+// SessionRejected terminates a session that cannot be established.
+message SessionRejected {
+  ProtocolError error = 1;
+
+  reserved 2 to 9;
+}

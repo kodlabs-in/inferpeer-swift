@@ -1,0 +1,11 @@
+version: v2
+clean: true
+plugins:
+  - local: .build/protobuf-tools/release/protoc-gen-swift
+    out: Sources/InferPeerProtocol/Generated
+    opt:
+      - FileNaming=FullPath
+      - Visibility=Public
+      - UseAccessLevelOnImports=true
+inputs:
+  - directory: Protos

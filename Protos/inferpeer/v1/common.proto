@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package inferpeer.v1;
+
+option swift_prefix = "InferPeer_V1_";
+
+// ProtocolVersion identifies one wire-compatible InferPeer protocol revision.
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+// ProtocolSupport advertises the versions and optional capabilities a peer accepts.
+message ProtocolSupport {
+  uint32 major = 1;
+  uint32 minimum_minor = 2;
+  uint32 maximum_minor = 3;
+  repeated Capability capabilities = 4;
+}
+
+// NegotiatedProtocol records the version and capabilities selected for a session.
+message NegotiatedProtocol {
+  ProtocolVersion version = 1;
+  repeated Capability capabilities = 2;
+}
+
+// Capability identifies optional protocol behavior supported by a peer.
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_SESSION_RESUMPTION = 1;
+  CAPABILITY_EVENT_REPLAY = 2;
+  CAPABILITY_DURABLE_CANCELLATION = 3;
+  CAPABILITY_ATTEMPT_LEASES = 4;
+  CAPABILITY_BOUNDED_STREAMING = 5;
+  CAPABILITY_ALLOWED_WORKERS = 6;
+  CAPABILITY_MODEL_REVISION_SELECTION = 7;
+}
+
+// NodeRole identifies a role explicitly enabled by a host application.
+enum NodeRole {
+  NODE_ROLE_UNSPECIFIED = 0;
+  NODE_ROLE_CALLER = 1;
+  NODE_ROLE_COORDINATOR = 2;
+  NODE_ROLE_WORKER = 3;
+}
+
+// ErrorCode is the stable error vocabulary shared across implementations.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_UNAUTHENTICATED = 1;
+  ERROR_CODE_PERMISSION_DENIED = 2;
+  ERROR_CODE_PROTOCOL_MISMATCH = 3;
+  ERROR_CODE_INVALID_REQUEST = 4;
+  ERROR_CODE_CONTEXT_TOO_LARGE = 5;
+  ERROR_CODE_MODEL_UNAVAILABLE = 6;
+  ERROR_CODE_WORKER_UNAVAILABLE = 7;
+  ERROR_CODE_RESOURCE_EXHAUSTED = 8;
+  ERROR_CODE_DEADLINE_EXCEEDED = 9;
+  ERROR_CODE_CANCELLED = 10;
+  ERROR_CODE_REPLAY_EXPIRED = 11;
+  ERROR_CODE_INTERNAL = 12;
+}
+
+// ProtocolError carries a stable code without exposing implementation details.
+message ProtocolError {
+  ErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+
+  reserved 4 to 9;
+}
+
+// MessageMetadata identifies, versions and sequences a command or event.
+message MessageMetadata {
+  ProtocolVersion protocol_version = 1;
+  string cluster_id = 2;
+  string authenticated_sender_id = 3;
+  string message_id = 4;
+  optional string request_id = 5;
+  optional string attempt_id = 6;
+  uint64 sequence = 7;
+  optional uint64 event_cursor = 8;
+
+  reserved 9;
+}

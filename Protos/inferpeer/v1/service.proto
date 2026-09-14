@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package inferpeer.v1;
+
+import "inferpeer/v1/session.proto";
+
+option swift_prefix = "InferPeer_V1_";
+
+// InferPeerService carries durable caller and worker sessions over a transport adapter.
+service InferPeerService {
+  // ClientSession streams caller commands to the coordinator and replayable events back.
+  rpc ClientSession(stream ClientSessionRequest) returns (stream ClientSessionResponse);
+
+  // WorkerSession streams worker status/results upstream and assignments/cancellation downstream.
+  rpc WorkerSession(stream WorkerSessionRequest) returns (stream WorkerSessionResponse);
+}

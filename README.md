@@ -30,11 +30,12 @@ caller-only consumer does not link the MLX runtime.
 - Swift 6.1 or later
 - macOS 15 or later, or iOS/iPadOS 18 or later
 - `swift-format` and `SwiftLint` for local quality checks
+- Buf 1.71 or later for Protobuf linting and generation
 
 Install the development tools with Homebrew:
 
 ```sh
-brew install swift-format swiftlint
+brew install buf swift-format swiftlint
 ```
 
 Run the complete local check suite:
@@ -46,11 +47,9 @@ make check
 Use `make format`, `make lint`, `make build`, or `make test` for individual tasks. The lint policy
 warns when cyclomatic complexity exceeds 10 and fails when it exceeds 15.
 
-## Project documents
-
-- [Product requirements](../PRD.md)
-- [Technical stack](../TECH_STACK.md)
-- [Vision](../VISION.md)
+The language-neutral schema lives in `Protos/inferpeer/v1`. Regenerate its committed Swift types
+with `make generate-protocol`; the command builds the matching generator from the resolved
+SwiftProtobuf dependency.
 
 The next milestone is the M0 compatibility spike: pin released dependencies, validate gRPC over
 mutual TLS on the target Apple platforms, and run one local MLX text model offline.
