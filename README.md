@@ -4,8 +4,8 @@ InferPeer is an experimental Swift package for distributing private, text-only i
 trusted Apple devices on an approved local network. A host app can act as a caller, coordinator,
 worker, or a combination of those roles.
 
-> Status: package scaffold for the `0.1.0` demo. The capabilities described in the product
-> documents are requirements, not completed features.
+> Status: experimental `0.1.0` development. `InferPeerProtocol` and `InferPeerInference` are
+> implemented; the remaining products are scaffolds rather than completed capabilities.
 
 ## Package structure
 
@@ -51,5 +51,5 @@ The language-neutral schema lives in `Protos/inferpeer/v1`. Regenerate its commi
 with `make generate-protocol`; the command builds the matching generator from the resolved
 SwiftProtobuf dependency.
 
-The next milestone is the M0 compatibility spike: pin released dependencies, validate gRPC over
-mutual TLS on the target Apple platforms, and run one local MLX text model offline.
+The next module is `InferPeerCore`. The M0 compatibility spike must also validate gRPC over mutual
+TLS on the target Apple platforms and run one local MLX text model offline.

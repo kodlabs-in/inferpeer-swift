@@ -98,5 +98,9 @@ let package = Package(
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
         ),
+        .testTarget(
+            name: "InferPeerInferenceTests",
+            dependencies: ["InferPeerInference", "InferPeerProtocol"]
+        ),
     ]
 )
