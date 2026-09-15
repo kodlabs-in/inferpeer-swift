@@ -33,7 +33,7 @@ public enum InferenceValidationError: Error, Equatable, Sendable {
     /// A permitted model selection contained no models.
     case emptyPermittedModels
 
-    /// A generation requested zero output tokens.
+    /// A generation requested zero or more than the supported demo output-token limit.
     case invalidMaximumOutputTokens
 
     /// A streamed text delta contained no text.

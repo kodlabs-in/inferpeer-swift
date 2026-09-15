@@ -6,12 +6,20 @@ public struct PeerTrustRecord: Hashable, Sendable {
     /// The exact approved certificate-bound identity.
     public let identity: PresentedPeerIdentity
 
+    /// Roles this exact certificate identity may perform.
+    public let roles: Set<NodeRole>
+
     /// The revocation time, or `nil` while active.
     public let revokedAt: Date?
 
     /// Creates a persisted trust snapshot.
-    public init(identity: PresentedPeerIdentity, revokedAt: Date?) {
+    public init(
+        identity: PresentedPeerIdentity,
+        roles: Set<NodeRole>,
+        revokedAt: Date?
+    ) {
         self.identity = identity
+        self.roles = roles
         self.revokedAt = revokedAt
     }
 }

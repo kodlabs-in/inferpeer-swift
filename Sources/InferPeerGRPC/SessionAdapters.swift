@@ -21,10 +21,10 @@ actor ValidatedMessageSender<Message: Sendable> {
         self.payloadIsValid = payloadIsValid
     }
 
-    func send(_ message: Message) throws {
+    func send(_ message: Message) async throws {
         guard payloadIsValid(message) else { throw InferPeerGRPCError.invalidMessage }
         try metadataValidator.validate(metadata(message))
-        try pipe.send(message)
+        try await pipe.send(message)
     }
 }
 
@@ -42,8 +42,11 @@ final class CoordinatorCallerSessionAdapter: CoordinatorCallerSession, @unchecke
         capacity: Int
     ) {
         self.authenticatedPeerID = authenticatedPeerID
-        inbound = BoundedMessagePipe(capacity: capacity)
-        outbound = BoundedMessagePipe(capacity: capacity)
+        inbound = BoundedMessagePipe(capacity: capacity, isControl: MessagePriority.clientRequest)
+        outbound = BoundedMessagePipe(
+            capacity: capacity,
+            isControl: MessagePriority.clientResponse
+        )
         sender = ValidatedMessageSender(
             metadataValidator: OrderedMetadataValidator(
                 clusterID: clusterID,
@@ -85,7 +88,7 @@ final class CoordinatorCallerSessionAdapter: CoordinatorCallerSession, @unchecke
     ) -> Bool {
         switch response.payload {
         case .requestAccepted, .requestStateChanged, .generationEvent, .cancellationUpdated,
-            .requestFailed:
+            .requestFailed, .commandRejected:
             true
         default:
             false
@@ -107,8 +110,11 @@ final class CoordinatorWorkerSessionAdapter: CoordinatorWorkerSession, @unchecke
         capacity: Int
     ) {
         self.authenticatedPeerID = authenticatedPeerID
-        inbound = BoundedMessagePipe(capacity: capacity)
-        outbound = BoundedMessagePipe(capacity: capacity)
+        inbound = BoundedMessagePipe(capacity: capacity, isControl: MessagePriority.workerRequest)
+        outbound = BoundedMessagePipe(
+            capacity: capacity,
+            isControl: MessagePriority.workerResponse
+        )
         sender = ValidatedMessageSender(
             metadataValidator: OrderedMetadataValidator(
                 clusterID: clusterID,
@@ -159,20 +165,33 @@ final class CoordinatorWorkerSessionAdapter: CoordinatorWorkerSession, @unchecke
 
 final class SessionTerminator: @unchecked Sendable {
     private let lock = NSLock()
-    private var hasTerminated = false
-    private let operation: @Sendable () -> Void
+    let id = UUID()
+    private var operation: (@Sendable () -> Void)?
+    private var onTermination: (@Sendable (UUID) -> Void)?
 
     init(_ operation: @escaping @Sendable () -> Void) {
         self.operation = operation
     }
 
-    func terminate() {
-        let shouldRun = lock.withLock {
-            guard !hasTerminated else { return false }
-            hasTerminated = true
-            return true
+    func notifyOnTermination(_ callback: @escaping @Sendable (UUID) -> Void) {
+        let terminatedID = lock.withLock { () -> UUID? in
+            guard operation != nil else { return id }
+            onTermination = callback
+            return nil
         }
-        if shouldRun { operation() }
+        if let terminatedID { callback(terminatedID) }
+    }
+
+    func terminate() {
+        let actions = lock.withLock {
+            let actions = (operation, onTermination)
+            operation = nil
+            onTermination = nil
+            return actions
+        }
+        guard let operation = actions.0 else { return }
+        operation()
+        actions.1?(id)
     }
 }
 

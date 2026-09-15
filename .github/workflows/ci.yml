@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install quality tools
+        run: brew install buf swift-format swiftlint
+      - name: Resolve pinned dependencies
+        run: swift package resolve
+      - name: Run package quality gate
+        run: make check
+      - name: Validate DocC
+        run: swift package generate-documentation --target InferPeer

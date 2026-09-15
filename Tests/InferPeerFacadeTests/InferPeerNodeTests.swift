@@ -34,14 +34,59 @@ struct InferPeerNodeTests {
         #expect(await transport.stopCount == 1)
     }
 
-    @Test("Pairing opens only explicitly enabled joining roles")
+    @Test("Concurrent starts cannot create duplicate coordinator resources")
+    func rejectsConcurrentStart() async throws {
+        let transport = SuspendedListenTransport()
+        let endpoint = try PeerEndpoint(host: "192.168.1.4", port: 8443)
+        let node = try makeNode(
+            roles: [.coordinator],
+            endpoint: endpoint,
+            transport: transport
+        )
+        let firstStart = Task { try await node.start() }
+        await transport.waitUntilListenStarts()
+
+        await #expect(throws: InferPeerNodeError.alreadyStarted) {
+            try await node.start()
+        }
+
+        await transport.resumeListen()
+        try await firstStart.value
+        #expect(await transport.listenCount == 1)
+        await node.stop()
+    }
+
+    @Test("Stopping during startup prevents late resource installation")
+    func stopCancelsInFlightStart() async throws {
+        let transport = SuspendedListenTransport()
+        let endpoint = try PeerEndpoint(host: "192.168.1.4", port: 8443)
+        let node = try makeNode(
+            roles: [.coordinator],
+            endpoint: endpoint,
+            transport: transport
+        )
+        let start = Task { try await node.start() }
+        await transport.waitUntilListenStarts()
+
+        await node.stop()
+        await transport.resumeListen()
+
+        await #expect(throws: CancellationError.self) {
+            try await start.value
+        }
+        #expect(await node.state() == .stopped)
+        #expect(await transport.stopCount >= 1)
+    }
+
+    @Test("Pairing sends the invitation without consuming coordinator state locally")
     func joinsEnabledRoles() async throws {
         let identity = FakeIdentityProvider()
         let transport = FakeTransport()
         let node = try makeNode(
             roles: [.caller, .worker],
             identity: identity,
-            transport: transport
+            transport: transport,
+            optional: .init(callerOutbox: FakeCallerOutbox())
         )
         try await node.start()
         let invitation = try makeInvitation()
@@ -50,9 +95,96 @@ struct InferPeerNodeTests {
 
         #expect(sessions.caller != nil)
         #expect(sessions.worker != nil)
-        #expect(await identity.consumedInvitationIDs == [invitation.invitationID])
+        #expect(await identity.consumedInvitationIDs.isEmpty)
         #expect(await transport.callerEndpoints == [invitation.coordinator.endpoint])
         #expect(await transport.workerEndpoints == [invitation.coordinator.endpoint])
+        #expect(await transport.callerInvitationIDs == [invitation.invitationID])
+        #expect(await transport.workerInvitationIDs == [invitation.invitationID])
+    }
+
+    @Test("Concurrent joins cannot create duplicate coordinator sessions")
+    func rejectsConcurrentJoin() async throws {
+        let transport = SuspendedJoinTransport()
+        let node = try makeNode(
+            roles: [.caller],
+            transport: transport,
+            optional: .init(callerOutbox: FakeCallerOutbox())
+        )
+        try await node.start()
+        let invitation = try makeInvitation()
+        let firstJoin = Task { try await node.join(invitation) }
+        await transport.waitUntilJoinStarts()
+
+        await #expect(throws: InferPeerNodeError.alreadyJoined) {
+            _ = try await node.join(invitation)
+        }
+
+        await transport.resumeJoin()
+        _ = try await firstJoin.value
+        #expect(await transport.joinCount == 1)
+        await node.stop()
+    }
+
+    @Test("Stopping during join closes the late session")
+    func stopCancelsInFlightJoin() async throws {
+        let transport = SuspendedJoinTransport()
+        let node = try makeNode(
+            roles: [.caller],
+            transport: transport,
+            optional: .init(callerOutbox: FakeCallerOutbox())
+        )
+        try await node.start()
+        let join = Task { try await node.join(makeInvitation()) }
+        await transport.waitUntilJoinStarts()
+
+        await node.stop()
+        await transport.resumeJoin()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await join.value
+        }
+        #expect(await transport.callerSession.closeCount == 1)
+        #expect(await node.state() == .stopped)
+    }
+
+    @Test("Leaving a disconnected coordinator permits an explicit rejoin")
+    func leavesAndRejoins() async throws {
+        let transport = FakeTransport()
+        let node = try makeNode(
+            roles: [.caller],
+            transport: transport,
+            optional: .init(callerOutbox: FakeCallerOutbox())
+        )
+        try await node.start()
+        let invitation = try makeInvitation()
+
+        _ = try await node.join(invitation)
+        await node.leaveCoordinator()
+        _ = try await node.join(invitation)
+
+        #expect(await transport.callerEndpoints.count == 2)
+        await node.stop()
+    }
+
+    @Test("Caller joining fails before use when no durable outbox is configured")
+    func requiresCallerOutbox() async throws {
+        let transport = FakeTransport()
+        let configuration = try InferPeerNodeConfiguration(roles: [.caller])
+        let node = InferPeerNode(
+            configuration: configuration,
+            dependencies: InferPeerDependencies(
+                identity: FakeIdentityProvider(),
+                transport: transport,
+                discovery: FakeDiscovery(),
+                status: FakeStatusProvider()
+            )
+        )
+        try await node.start()
+
+        await #expect(throws: InferPeerNodeError.callerOutboxUnavailable) {
+            _ = try await node.join(makeInvitation())
+        }
+        await node.stop()
     }
 
     @Test("Worker model operations use injected registry and backend")
@@ -105,139 +237,6 @@ struct InferPeerNodeTests {
             // Expected command.
         } else {
             Issue.record("Expected a cancellation command")
-        }
-    }
-
-    @Test("Request events replay with attempt boundaries and explicit acknowledgement")
-    func replaysAndAcknowledgesEvents() async throws {
-        let outbox = FakeCallerOutbox()
-        let transport = FakeTransport()
-        let node = try makeNode(
-            roles: [.caller],
-            transport: transport,
-            optional: .init(callerOutbox: outbox)
-        )
-        try await node.start()
-        _ = try await node.join(makeInvitation())
-        let requestID = try #require(RequestID(rawValue: "request-1"))
-        _ = try await node.submit(makeRequest(), requestID: requestID)
-        let events = try await node.events(requestID: requestID, after: nil)
-        let task = Task { try await #require(events.first(where: { _ in true })) }
-        await Task.yield()
-
-        transport.callerSession.emit(acceptedResponse(requestID: requestID, cursor: 1))
-        let event = try await task.value
-        try await node.acknowledge(requestID: requestID, through: event.cursor)
-
-        #expect(event.requestID == requestID)
-        #expect(event.cursor == 1)
-        #expect(event.payload == .accepted(.queued))
-        #expect(await outbox.removedRequestIDs == [requestID])
-        let status = try await node.requestStatus(requestID)
-        #expect(status.phase == .accepted(.queued))
-        #expect(status.acknowledgedEventCursor == 1)
-    }
-
-    @Test("Role-specific operations fail before touching adapters")
-    func enforcesRoles() async throws {
-        let node = try makeNode(roles: [.caller])
-        try await node.start()
-
-        await #expect(throws: InferPeerNodeError.roleNotEnabled(.worker)) {
-            try await node.setParticipation(.available)
-        }
-    }
-
-    @Test("Configuration requires a coordinator endpoint")
-    func requiresCoordinatorEndpoint() {
-        #expect(throws: InferPeerNodeError.coordinatorEndpointRequired) {
-            _ = try InferPeerNodeConfiguration(roles: [.coordinator])
-        }
-    }
-
-    private func makeNode(
-        roles: Set<NodeRole>,
-        endpoint: PeerEndpoint? = nil,
-        identity: any IdentityProvider = FakeIdentityProvider(),
-        transport: any PeerTransport = FakeTransport(),
-        optional: InferPeerOptionalServices = .init()
-    ) throws -> InferPeerNode {
-        let configuration = try InferPeerNodeConfiguration(
-            roles: roles,
-            coordinatorEndpoint: endpoint
-        )
-        let dependencies = InferPeerDependencies(
-            identity: identity,
-            transport: transport,
-            discovery: FakeDiscovery(),
-            status: FakeStatusProvider(),
-            optional: optional
-        )
-        return InferPeerNode(configuration: configuration, dependencies: dependencies)
-    }
-
-    private func makeInvitation() throws -> PairingInvitation {
-        let endpoint = try PeerEndpoint(host: "192.168.1.4", port: 8443)
-        let coordinator = PairingCoordinator(
-            clusterID: try #require(ClusterID(rawValue: "cluster-1")),
-            endpoint: endpoint,
-            certificateFingerprint: try CertificateFingerprint(
-                bytes: Data(repeating: 0xA5, count: 32)
-            )
-        )
-        return PairingInvitation(
-            invitationID: try #require(InvitationID(rawValue: "invitation-1")),
-            coordinator: coordinator,
-            expiresAt: Date().addingTimeInterval(60),
-            proof: Data([0x01])
-        )
-    }
-
-    private func makeArtifact() throws -> LocalModelArtifact {
-        let reference = try ModelReference(
-            modelID: #require(ModelID(rawValue: "model-1")),
-            revision: "revision-1"
-        )
-        let metadata = try ModelMetadata(
-            quantization: "4-bit",
-            tokenizer: "tokenizer.json",
-            chatTemplate: "template",
-            license: "Apache-2.0"
-        )
-        let descriptor = try ModelDescriptor(
-            reference: reference,
-            runtimeFormat: .mlx,
-            metadata: metadata,
-            contextTokenLimit: 128,
-            contentDigest: ModelContentDigest(bytes: Data(repeating: 0xA5, count: 32))
-        )
-        return try LocalModelArtifact(
-            descriptor: descriptor,
-            directoryURL: URL(fileURLWithPath: "/models/model-1", isDirectory: true)
-        )
-    }
-
-    private func makeRequest() throws -> TextGenerationRequest {
-        let context = try ConversationContext(
-            conversationID: #require(ConversationID(rawValue: "conversation-1")),
-            revision: 1,
-            messages: [try TextMessage(role: .user, text: "Hello")]
-        )
-        let options = try GenerationOptions(
-            modelRequirement: .exact(makeArtifact().descriptor.reference),
-            maximumOutputTokens: 8
-        )
-        return TextGenerationRequest(context: context, options: options)
-    }
-
-    private func acceptedResponse(
-        requestID: RequestID,
-        cursor: UInt64
-    ) -> InferPeer_V1_ClientSessionResponse {
-        InferPeer_V1_ClientSessionResponse.with {
-            $0.metadata.requestID = requestID.rawValue
-            $0.metadata.eventCursor = cursor
-            $0.requestAccepted.state = .queued
         }
     }
 }

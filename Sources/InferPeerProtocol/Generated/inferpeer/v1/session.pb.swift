@@ -262,6 +262,38 @@ public nonisolated struct InferPeer_V1_RequestFailed: Sendable {
   fileprivate var _error: InferPeer_V1_ProtocolError? = nil
 }
 
+/// CommandRejected reports that a command did not durably change coordinator state.
+public nonisolated struct InferPeer_V1_CommandRejected: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var error: InferPeer_V1_ProtocolError {
+    get {_error ?? InferPeer_V1_ProtocolError()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  public var retainedTerminalResult: InferPeer_V1_GenerationCompleted {
+    get {_retainedTerminalResult ?? InferPeer_V1_GenerationCompleted()}
+    set {_retainedTerminalResult = newValue}
+  }
+  /// Returns true if `retainedTerminalResult` has been explicitly set.
+  public var hasRetainedTerminalResult: Bool {self._retainedTerminalResult != nil}
+  /// Clears the value of `retainedTerminalResult`. Subsequent reads from it will return its default value.
+  public mutating func clearRetainedTerminalResult() {self._retainedTerminalResult = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _error: InferPeer_V1_ProtocolError? = nil
+  fileprivate var _retainedTerminalResult: InferPeer_V1_GenerationCompleted? = nil
+}
+
 /// ClientSessionRequest carries one caller command. SessionHello must be sent first.
 public nonisolated struct InferPeer_V1_ClientSessionRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -339,76 +371,87 @@ public nonisolated struct InferPeer_V1_ClientSessionRequest: @unchecked Sendable
 }
 
 /// ClientSessionResponse carries one replayable coordinator event.
-public nonisolated struct InferPeer_V1_ClientSessionResponse: Sendable {
+public nonisolated struct InferPeer_V1_ClientSessionResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var metadata: InferPeer_V1_MessageMetadata {
-    get {_metadata ?? InferPeer_V1_MessageMetadata()}
-    set {_metadata = newValue}
+    get {_storage._metadata ?? InferPeer_V1_MessageMetadata()}
+    set {_uniqueStorage()._metadata = newValue}
   }
   /// Returns true if `metadata` has been explicitly set.
-  public var hasMetadata: Bool {self._metadata != nil}
+  public var hasMetadata: Bool {_storage._metadata != nil}
   /// Clears the value of `metadata`. Subsequent reads from it will return its default value.
-  public mutating func clearMetadata() {self._metadata = nil}
+  public mutating func clearMetadata() {_uniqueStorage()._metadata = nil}
 
-  public var payload: InferPeer_V1_ClientSessionResponse.OneOf_Payload? = nil
+  public var payload: OneOf_Payload? {
+    get {return _storage._payload}
+    set {_uniqueStorage()._payload = newValue}
+  }
 
   public var sessionAccepted: InferPeer_V1_SessionAccepted {
     get {
-      if case .sessionAccepted(let v)? = payload {return v}
+      if case .sessionAccepted(let v)? = _storage._payload {return v}
       return InferPeer_V1_SessionAccepted()
     }
-    set {payload = .sessionAccepted(newValue)}
+    set {_uniqueStorage()._payload = .sessionAccepted(newValue)}
   }
 
   public var sessionRejected: InferPeer_V1_SessionRejected {
     get {
-      if case .sessionRejected(let v)? = payload {return v}
+      if case .sessionRejected(let v)? = _storage._payload {return v}
       return InferPeer_V1_SessionRejected()
     }
-    set {payload = .sessionRejected(newValue)}
+    set {_uniqueStorage()._payload = .sessionRejected(newValue)}
   }
 
   public var requestAccepted: InferPeer_V1_RequestAccepted {
     get {
-      if case .requestAccepted(let v)? = payload {return v}
+      if case .requestAccepted(let v)? = _storage._payload {return v}
       return InferPeer_V1_RequestAccepted()
     }
-    set {payload = .requestAccepted(newValue)}
+    set {_uniqueStorage()._payload = .requestAccepted(newValue)}
   }
 
   public var requestStateChanged: InferPeer_V1_RequestStateChanged {
     get {
-      if case .requestStateChanged(let v)? = payload {return v}
+      if case .requestStateChanged(let v)? = _storage._payload {return v}
       return InferPeer_V1_RequestStateChanged()
     }
-    set {payload = .requestStateChanged(newValue)}
+    set {_uniqueStorage()._payload = .requestStateChanged(newValue)}
   }
 
   public var generationEvent: InferPeer_V1_GenerationEvent {
     get {
-      if case .generationEvent(let v)? = payload {return v}
+      if case .generationEvent(let v)? = _storage._payload {return v}
       return InferPeer_V1_GenerationEvent()
     }
-    set {payload = .generationEvent(newValue)}
+    set {_uniqueStorage()._payload = .generationEvent(newValue)}
   }
 
   public var cancellationUpdated: InferPeer_V1_CancellationUpdated {
     get {
-      if case .cancellationUpdated(let v)? = payload {return v}
+      if case .cancellationUpdated(let v)? = _storage._payload {return v}
       return InferPeer_V1_CancellationUpdated()
     }
-    set {payload = .cancellationUpdated(newValue)}
+    set {_uniqueStorage()._payload = .cancellationUpdated(newValue)}
   }
 
   public var requestFailed: InferPeer_V1_RequestFailed {
     get {
-      if case .requestFailed(let v)? = payload {return v}
+      if case .requestFailed(let v)? = _storage._payload {return v}
       return InferPeer_V1_RequestFailed()
     }
-    set {payload = .requestFailed(newValue)}
+    set {_uniqueStorage()._payload = .requestFailed(newValue)}
+  }
+
+  public var commandRejected: InferPeer_V1_CommandRejected {
+    get {
+      if case .commandRejected(let v)? = _storage._payload {return v}
+      return InferPeer_V1_CommandRejected()
+    }
+    set {_uniqueStorage()._payload = .commandRejected(newValue)}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -421,12 +464,13 @@ public nonisolated struct InferPeer_V1_ClientSessionResponse: Sendable {
     case generationEvent(InferPeer_V1_GenerationEvent)
     case cancellationUpdated(InferPeer_V1_CancellationUpdated)
     case requestFailed(InferPeer_V1_RequestFailed)
+    case commandRejected(InferPeer_V1_CommandRejected)
 
   }
 
   public init() {}
 
-  fileprivate var _metadata: InferPeer_V1_MessageMetadata? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 /// AttemptAssignment leases one complete request snapshot to an eligible worker.
@@ -450,11 +494,21 @@ public nonisolated struct InferPeer_V1_AttemptAssignment: Sendable {
 
   public var coordinatorIncarnationID: String = String()
 
+  public var selectedModel: InferPeer_V1_ModelReference {
+    get {_selectedModel ?? InferPeer_V1_ModelReference()}
+    set {_selectedModel = newValue}
+  }
+  /// Returns true if `selectedModel` has been explicitly set.
+  public var hasSelectedModel: Bool {self._selectedModel != nil}
+  /// Clears the value of `selectedModel`. Subsequent reads from it will return its default value.
+  public mutating func clearSelectedModel() {self._selectedModel = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _request: InferPeer_V1_TextRequest? = nil
+  fileprivate var _selectedModel: InferPeer_V1_ModelReference? = nil
 }
 
 /// CancelAttemptCommand asks the active worker attempt to stop cooperatively.
@@ -973,6 +1027,45 @@ nonisolated extension InferPeer_V1_RequestFailed: SwiftProtobuf.Message, SwiftPr
   }
 }
 
+nonisolated extension InferPeer_V1_CommandRejected: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CommandRejected"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}error\0\u{3}retained_terminal_result\0\u{c}\u{3}\u{7}")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._retainedTerminalResult) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._retainedTerminalResult {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: InferPeer_V1_CommandRejected, rhs: InferPeer_V1_CommandRejected) -> Bool {
+    if lhs._error != rhs._error {return false}
+    if lhs._retainedTerminalResult != rhs._retainedTerminalResult {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension InferPeer_V1_ClientSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClientSessionRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}metadata\0\u{2}\u{9}hello\0\u{1}submit\0\u{1}cancel\0\u{1}resume\0\u{3}acknowledge_events\0\u{c}\u{2}\u{8}")
@@ -1136,156 +1229,211 @@ nonisolated extension InferPeer_V1_ClientSessionRequest: SwiftProtobuf.Message, 
 
 nonisolated extension InferPeer_V1_ClientSessionResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClientSessionResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}metadata\0\u{4}\u{9}session_accepted\0\u{3}session_rejected\0\u{3}request_accepted\0\u{3}request_state_changed\0\u{3}generation_event\0\u{3}cancellation_updated\0\u{3}request_failed\0\u{c}\u{2}\u{8}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}metadata\0\u{4}\u{9}session_accepted\0\u{3}session_rejected\0\u{3}request_accepted\0\u{3}request_state_changed\0\u{3}generation_event\0\u{3}cancellation_updated\0\u{3}request_failed\0\u{3}command_rejected\0\u{c}\u{2}\u{8}")
+
+  fileprivate class _StorageClass {
+    var _metadata: InferPeer_V1_MessageMetadata? = nil
+    var _payload: InferPeer_V1_ClientSessionResponse.OneOf_Payload?
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _metadata = source._metadata
+      _payload = source._payload
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._metadata) }()
-      case 10: try {
-        var v: InferPeer_V1_SessionAccepted?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .sessionAccepted(let m) = current {v = m}
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._metadata) }()
+        case 10: try {
+          var v: InferPeer_V1_SessionAccepted?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .sessionAccepted(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .sessionAccepted(v)
+          }
+        }()
+        case 11: try {
+          var v: InferPeer_V1_SessionRejected?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .sessionRejected(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .sessionRejected(v)
+          }
+        }()
+        case 12: try {
+          var v: InferPeer_V1_RequestAccepted?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .requestAccepted(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .requestAccepted(v)
+          }
+        }()
+        case 13: try {
+          var v: InferPeer_V1_RequestStateChanged?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .requestStateChanged(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .requestStateChanged(v)
+          }
+        }()
+        case 14: try {
+          var v: InferPeer_V1_GenerationEvent?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .generationEvent(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .generationEvent(v)
+          }
+        }()
+        case 15: try {
+          var v: InferPeer_V1_CancellationUpdated?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .cancellationUpdated(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .cancellationUpdated(v)
+          }
+        }()
+        case 16: try {
+          var v: InferPeer_V1_RequestFailed?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .requestFailed(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .requestFailed(v)
+          }
+        }()
+        case 17: try {
+          var v: InferPeer_V1_CommandRejected?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .commandRejected(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .commandRejected(v)
+          }
+        }()
+        default: break
         }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .sessionAccepted(v)
-        }
-      }()
-      case 11: try {
-        var v: InferPeer_V1_SessionRejected?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .sessionRejected(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .sessionRejected(v)
-        }
-      }()
-      case 12: try {
-        var v: InferPeer_V1_RequestAccepted?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .requestAccepted(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .requestAccepted(v)
-        }
-      }()
-      case 13: try {
-        var v: InferPeer_V1_RequestStateChanged?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .requestStateChanged(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .requestStateChanged(v)
-        }
-      }()
-      case 14: try {
-        var v: InferPeer_V1_GenerationEvent?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .generationEvent(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .generationEvent(v)
-        }
-      }()
-      case 15: try {
-        var v: InferPeer_V1_CancellationUpdated?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .cancellationUpdated(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .cancellationUpdated(v)
-        }
-      }()
-      case 16: try {
-        var v: InferPeer_V1_RequestFailed?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .requestFailed(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .requestFailed(v)
-        }
-      }()
-      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._metadata {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    switch self.payload {
-    case .sessionAccepted?: try {
-      guard case .sessionAccepted(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
-    }()
-    case .sessionRejected?: try {
-      guard case .sessionRejected(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
-    }()
-    case .requestAccepted?: try {
-      guard case .requestAccepted(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
-    }()
-    case .requestStateChanged?: try {
-      guard case .requestStateChanged(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
-    }()
-    case .generationEvent?: try {
-      guard case .generationEvent(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
-    }()
-    case .cancellationUpdated?: try {
-      guard case .cancellationUpdated(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
-    }()
-    case .requestFailed?: try {
-      guard case .requestFailed(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
-    }()
-    case nil: break
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._metadata {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      switch _storage._payload {
+      case .sessionAccepted?: try {
+        guard case .sessionAccepted(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      }()
+      case .sessionRejected?: try {
+        guard case .sessionRejected(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+      }()
+      case .requestAccepted?: try {
+        guard case .requestAccepted(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+      }()
+      case .requestStateChanged?: try {
+        guard case .requestStateChanged(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      }()
+      case .generationEvent?: try {
+        guard case .generationEvent(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      }()
+      case .cancellationUpdated?: try {
+        guard case .cancellationUpdated(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+      }()
+      case .requestFailed?: try {
+        guard case .requestFailed(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+      }()
+      case .commandRejected?: try {
+        guard case .commandRejected(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
+      }()
+      case nil: break
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: InferPeer_V1_ClientSessionResponse, rhs: InferPeer_V1_ClientSessionResponse) -> Bool {
-    if lhs._metadata != rhs._metadata {return false}
-    if lhs.payload != rhs.payload {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._metadata != rhs_storage._metadata {return false}
+        if _storage._payload != rhs_storage._payload {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1293,7 +1441,7 @@ nonisolated extension InferPeer_V1_ClientSessionResponse: SwiftProtobuf.Message,
 
 nonisolated extension InferPeer_V1_AttemptAssignment: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AttemptAssignment"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}request\0\u{3}attempt_number\0\u{3}lease_duration_milliseconds\0\u{3}coordinator_incarnation_id\0\u{c}\u{5}\u{5}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}request\0\u{3}attempt_number\0\u{3}lease_duration_milliseconds\0\u{3}coordinator_incarnation_id\0\u{3}selected_model\0\u{c}\u{6}\u{4}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1305,6 +1453,7 @@ nonisolated extension InferPeer_V1_AttemptAssignment: SwiftProtobuf.Message, Swi
       case 2: try { try decoder.decodeSingularUInt32Field(value: &self.attemptNumber) }()
       case 3: try { try decoder.decodeSingularUInt64Field(value: &self.leaseDurationMilliseconds) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.coordinatorIncarnationID) }()
+      case 5: try { try decoder.decodeSingularMessageField(value: &self._selectedModel) }()
       default: break
       }
     }
@@ -1327,6 +1476,9 @@ nonisolated extension InferPeer_V1_AttemptAssignment: SwiftProtobuf.Message, Swi
     if !self.coordinatorIncarnationID.isEmpty {
       try visitor.visitSingularStringField(value: self.coordinatorIncarnationID, fieldNumber: 4)
     }
+    try { if let v = self._selectedModel {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1335,6 +1487,7 @@ nonisolated extension InferPeer_V1_AttemptAssignment: SwiftProtobuf.Message, Swi
     if lhs.attemptNumber != rhs.attemptNumber {return false}
     if lhs.leaseDurationMilliseconds != rhs.leaseDurationMilliseconds {return false}
     if lhs.coordinatorIncarnationID != rhs.coordinatorIncarnationID {return false}
+    if lhs._selectedModel != rhs._selectedModel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

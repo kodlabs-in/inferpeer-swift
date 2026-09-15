@@ -3,3 +3,5 @@
 .swiftpm/xcode/package.xcworkspace/xcuserdata/
 DerivedData/
 *.xcuserstate
+.swiftpm/
+*.profraw

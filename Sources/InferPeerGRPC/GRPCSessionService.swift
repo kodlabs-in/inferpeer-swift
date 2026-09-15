@@ -66,6 +66,7 @@ extension GRPCSessionService {
         identity: PresentedPeerIdentity,
         latch: HandshakeLatch<CoordinatorCallerSessionAdapter>
     ) async throws {
+        var openedSession: CoordinatorCallerSessionAdapter?
         do {
             var iterator = request.makeAsyncIterator()
             let first = try await requiredFirstMessage(from: &iterator)
@@ -79,13 +80,14 @@ extension GRPCSessionService {
                 response: response
             )
             let session = makeCallerSession(identity: identity, negotiated: negotiated)
+            openedSession = session
             try await response.write(
                 HandshakeMessageFactory.callerAccepted(
                     configuration: configuration,
                     negotiated: negotiated
                 )
             )
-            try inboundSessions.send(.caller(session))
+            try await inboundSessions.send(.caller(session))
             await latch.succeed(session)
             try await consumeCallerApplicationMessages(
                 from: &iterator,
@@ -94,7 +96,9 @@ extension GRPCSessionService {
                 session: session
             )
         } catch {
-            await latch.fail(error)
+            let publicError = GRPCErrorMapper.publicError(from: error)
+            openedSession?.fail(publicError)
+            await latch.fail(publicError)
             throw error
         }
     }
@@ -105,6 +109,7 @@ extension GRPCSessionService {
         identity: PresentedPeerIdentity,
         latch: HandshakeLatch<CoordinatorWorkerSessionAdapter>
     ) async throws {
+        var openedSession: CoordinatorWorkerSessionAdapter?
         do {
             var iterator = request.makeAsyncIterator()
             let first = try await requiredFirstMessage(from: &iterator)
@@ -118,13 +123,14 @@ extension GRPCSessionService {
                 response: response
             )
             let session = makeWorkerSession(identity: identity, negotiated: negotiated)
+            openedSession = session
             try await response.write(
                 HandshakeMessageFactory.workerAccepted(
                     configuration: configuration,
                     negotiated: negotiated
                 )
             )
-            try inboundSessions.send(.worker(session))
+            try await inboundSessions.send(.worker(session))
             await latch.succeed(session)
             try await consumeWorkerApplicationMessages(
                 from: &iterator,
@@ -133,7 +139,9 @@ extension GRPCSessionService {
                 session: session
             )
         } catch {
-            await latch.fail(error)
+            let publicError = GRPCErrorMapper.publicError(from: error)
+            openedSession?.fail(publicError)
+            await latch.fail(publicError)
             throw error
         }
     }
@@ -201,7 +209,7 @@ extension GRPCSessionService {
                 throw InferPeerGRPCError.invalidMessage
             }
             try validator.validate(message.metadata)
-            try session.inbound.send(message)
+            try await session.inbound.send(message)
         }
         session.finish()
     }
@@ -218,7 +226,7 @@ extension GRPCSessionService {
                 throw InferPeerGRPCError.invalidMessage
             }
             try validator.validate(message.metadata)
-            try session.inbound.send(message)
+            try await session.inbound.send(message)
         }
         session.finish()
     }

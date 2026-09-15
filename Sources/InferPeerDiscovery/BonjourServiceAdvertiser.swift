@@ -17,17 +17,35 @@ public enum BonjourAdvertisementEvent: Equatable, Sendable {
 public final class BonjourServiceAdvertiser: NSObject, @preconcurrency NetServiceDelegate {
     private let serviceName: String
     private let port: UInt16
+    private let publishService: (NetService) -> Void
+    private let stopService: (NetService) -> Void
     private var service: NetService?
     private var continuations: [UUID: AsyncStream<BonjourAdvertisementEvent>.Continuation] = [:]
 
     /// Creates an advertiser for one already-running coordinator listener.
-    public init(serviceName: String, port: UInt16) throws {
+    public convenience init(serviceName: String, port: UInt16) throws {
+        try self.init(
+            serviceName: serviceName,
+            port: port,
+            publishService: { $0.publish() },
+            stopService: { $0.stop() }
+        )
+    }
+
+    init(
+        serviceName: String,
+        port: UInt16,
+        publishService: @escaping (NetService) -> Void,
+        stopService: @escaping (NetService) -> Void
+    ) throws {
         guard !serviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PeerDiscoveryError.invalidServiceName
         }
         guard port > 0 else { throw PeerDiscoveryError.invalidAdvertisementPort }
         self.serviceName = serviceName
         self.port = port
+        self.publishService = publishService
+        self.stopService = stopService
     }
 
     /// Returns a bounded stream of subsequent publication lifecycle events.
@@ -54,28 +72,34 @@ public final class BonjourServiceAdvertiser: NSObject, @preconcurrency NetServic
         service.delegate = self
         service.setTXTRecord(NetService.data(fromTXTRecord: ["v": Data(protocolVersion.utf8)]))
         self.service = service
-        service.publish()
+        publishService(service)
     }
 
     /// Stops publication and releases the Foundation service object.
     public func stop() {
-        service?.stop()
-        service = nil
+        guard let service else { return }
+        self.service = nil
+        service.delegate = nil
+        stopService(service)
+        publish(.stopped)
     }
 
     /// Receives Foundation's successful-publication delegate callback.
     public func netServiceDidPublish(_ sender: NetService) {
+        guard sender === service else { return }
         publish(.published)
     }
 
     /// Receives Foundation's stopped-publication delegate callback.
     public func netServiceDidStop(_ sender: NetService) {
+        guard sender === service else { return }
         service = nil
         publish(.stopped)
     }
 
     /// Receives Foundation's publication-failure delegate callback.
     public func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
+        guard sender === service else { return }
         service = nil
         let code = errorDict[NetService.errorCode]?.intValue ?? 0
         publish(.failed(errorCode: code))

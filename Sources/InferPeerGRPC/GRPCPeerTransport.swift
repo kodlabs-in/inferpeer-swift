@@ -1,3 +1,4 @@
+import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2Posix
 import InferPeerCore
@@ -7,7 +8,8 @@ import InferPeerProtocol
 public actor GRPCPeerTransport: PeerTransport {
     private let configuration: GRPCTransportConfiguration
     private var listener: GRPCCoordinatorListener?
-    private var clientTerminators: [SessionTerminator] = []
+    private var clientTerminators: [UUID: SessionTerminator] = [:]
+    private let pathMonitor = WiFiPathMonitor()
 
     /// Creates a stopped adapter. No socket or credential access occurs until connect/listen.
     public init(configuration: GRPCTransportConfiguration) {
@@ -20,6 +22,7 @@ public actor GRPCPeerTransport: PeerTransport {
     ) async throws -> any CoordinatorTransportListener {
         try requireRole(.coordinator)
         try configuration.networkPolicy.validate(endpoint)
+        startPathMonitoringIfNeeded()
         guard listener == nil else { throw InferPeerGRPCError.invalidConfiguration }
 
         let registry = VerifiedPeerRegistry(verifier: configuration.certificateVerifier)
@@ -65,15 +68,34 @@ public actor GRPCPeerTransport: PeerTransport {
     public func connectCaller(
         to endpoint: PeerEndpoint
     ) async throws -> any CallerTransportSession {
+        try await openCaller(to: endpoint, configuration: configuration)
+    }
+
+    /// Opens a caller session using the invitation selected by the joining host.
+    public func connectCaller(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) async throws -> any CallerTransportSession {
+        let configuration = try configuration.applying(invitation, to: endpoint)
+        return try await openCaller(to: endpoint, configuration: configuration)
+    }
+
+    private func openCaller(
+        to endpoint: PeerEndpoint,
+        configuration: GRPCTransportConfiguration
+    ) async throws -> any CallerTransportSession {
         try requireRole(.caller)
-        let resources = try makeClientResources(endpoint: endpoint)
+        let resources = try makeClientResources(
+            endpoint: endpoint,
+            configuration: configuration
+        )
         let opened = try await ClientSessionRunner.openCaller(
             configuration: configuration,
             registry: resources.registry,
             expectedFingerprint: resources.expectedFingerprint,
             client: resources.client
         )
-        clientTerminators.append(opened.terminator)
+        retain(opened.terminator)
         return opened.session
     }
 
@@ -81,24 +103,45 @@ public actor GRPCPeerTransport: PeerTransport {
     public func connectWorker(
         to endpoint: PeerEndpoint
     ) async throws -> any WorkerTransportSession {
+        try await openWorker(to: endpoint, configuration: configuration)
+    }
+
+    /// Opens a worker session using the invitation selected by the joining host.
+    public func connectWorker(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) async throws -> any WorkerTransportSession {
+        let configuration = try configuration.applying(invitation, to: endpoint)
+        return try await openWorker(to: endpoint, configuration: configuration)
+    }
+
+    private func openWorker(
+        to endpoint: PeerEndpoint,
+        configuration: GRPCTransportConfiguration
+    ) async throws -> any WorkerTransportSession {
         try requireRole(.worker)
-        let resources = try makeClientResources(endpoint: endpoint)
+        let resources = try makeClientResources(
+            endpoint: endpoint,
+            configuration: configuration
+        )
         let opened = try await ClientSessionRunner.openWorker(
             configuration: configuration,
             registry: resources.registry,
             expectedFingerprint: resources.expectedFingerprint,
             client: resources.client
         )
-        clientTerminators.append(opened.terminator)
+        retain(opened.terminator)
         return opened.session
     }
 
     /// Closes the listener, active client sessions, and their underlying gRPC clients.
     public func stop() async {
+        pathMonitor.cancel()
         await listener?.close()
         listener = nil
-        clientTerminators.forEach { $0.terminate() }
+        let terminators = Array(clientTerminators.values)
         clientTerminators.removeAll()
+        terminators.forEach { $0.terminate() }
     }
 
     private func requireRole(_ role: NodeRole) throws {
@@ -107,10 +150,27 @@ public actor GRPCPeerTransport: PeerTransport {
         }
     }
 
+    private func retain(_ terminator: SessionTerminator) {
+        clientTerminators[terminator.id] = terminator
+        terminator.notifyOnTermination { [weak self] id in
+            Task { await self?.removeTerminator(id) }
+        }
+    }
+
+    private func removeTerminator(_ id: UUID) {
+        clientTerminators[id] = nil
+    }
+
+    func activeClientSessionCount() -> Int {
+        clientTerminators.count
+    }
+
     private func makeClientResources(
-        endpoint: PeerEndpoint
+        endpoint: PeerEndpoint,
+        configuration: GRPCTransportConfiguration
     ) throws -> ClientResources {
         try configuration.networkPolicy.validate(endpoint)
+        startPathMonitoringIfNeeded()
         let expectedFingerprint = try configuration.coordinatorFingerprint(for: endpoint)
         let registry = VerifiedPeerRegistry(verifier: configuration.certificateVerifier)
         let transport = try HTTP2ClientTransport.Posix(
@@ -130,6 +190,18 @@ public actor GRPCPeerTransport: PeerTransport {
             registry: registry,
             expectedFingerprint: expectedFingerprint
         )
+    }
+
+    private func startPathMonitoringIfNeeded() {
+        let policy = configuration.networkPolicy
+        guard !policy.allowsLoopback else { return }
+        pathMonitor.start(interfaceName: policy.interfaceName) { [weak self] in
+            Task { await self?.stopForDisallowedPath() }
+        }
+    }
+
+    private func stopForDisallowedPath() async {
+        await stop()
     }
 
     private static func identityExtractor(
@@ -167,209 +239,4 @@ private struct ClientResources: Sendable {
     let client: GRPCClient<HTTP2ClientTransport.Posix>
     let registry: VerifiedPeerRegistry
     let expectedFingerprint: CertificateFingerprint
-}
-
-enum ClientSessionRunner {
-    struct RPCContext<Input: Sendable, Output: Sendable>: Sendable {
-        let configuration: GRPCTransportConfiguration
-        let registry: VerifiedPeerRegistry
-        let expectedFingerprint: CertificateFingerprint
-        let inbound: BoundedMessagePipe<Input>
-        let outbound: BoundedMessagePipe<Output>
-        let latch: HandshakeLatch<HandshakeResult>
-    }
-
-    struct OpenedCaller: Sendable {
-        let session: CallerSessionAdapter
-        let terminator: SessionTerminator
-    }
-
-    struct OpenedWorker: Sendable {
-        let session: WorkerSessionAdapter
-        let terminator: SessionTerminator
-    }
-
-    static func openCaller(
-        configuration: GRPCTransportConfiguration,
-        registry: VerifiedPeerRegistry,
-        expectedFingerprint: CertificateFingerprint,
-        client: GRPCClient<HTTP2ClientTransport.Posix>
-    ) async throws -> OpenedCaller {
-        let inbound = BoundedMessagePipe<InferPeer_V1_ClientSessionResponse>(
-            capacity: configuration.streamBufferLimit
-        )
-        let outbound = BoundedMessagePipe<InferPeer_V1_ClientSessionRequest>(
-            capacity: configuration.streamBufferLimit
-        )
-        let latch = HandshakeLatch<HandshakeResult>()
-        let connectionTask = startClient(client)
-        let context = RPCContext(
-            configuration: configuration,
-            registry: registry,
-            expectedFingerprint: expectedFingerprint,
-            inbound: inbound,
-            outbound: outbound,
-            latch: latch
-        )
-        let rpcTask = startCallerRPC(client: client, context: context)
-        do {
-            let handshake = try await latch.wait()
-            let terminator = makeTerminator(
-                client: client,
-                connectionTask: connectionTask,
-                rpcTask: rpcTask,
-                inbound: inbound,
-                outbound: outbound
-            )
-            let session = CallerSessionAdapter(
-                inbound: inbound,
-                outbound: outbound,
-                configuration: configuration,
-                negotiatedProtocol: handshake.negotiatedProtocol,
-                terminator: terminator
-            )
-            return OpenedCaller(session: session, terminator: terminator)
-        } catch {
-            connectionTask.cancel()
-            rpcTask.cancel()
-            throw GRPCErrorMapper.publicError(from: error)
-        }
-    }
-
-    static func openWorker(
-        configuration: GRPCTransportConfiguration,
-        registry: VerifiedPeerRegistry,
-        expectedFingerprint: CertificateFingerprint,
-        client: GRPCClient<HTTP2ClientTransport.Posix>
-    ) async throws -> OpenedWorker {
-        let inbound = BoundedMessagePipe<InferPeer_V1_WorkerSessionResponse>(
-            capacity: configuration.streamBufferLimit
-        )
-        let outbound = BoundedMessagePipe<InferPeer_V1_WorkerSessionRequest>(
-            capacity: configuration.streamBufferLimit
-        )
-        let latch = HandshakeLatch<HandshakeResult>()
-        let connectionTask = startClient(client)
-        let context = RPCContext(
-            configuration: configuration,
-            registry: registry,
-            expectedFingerprint: expectedFingerprint,
-            inbound: inbound,
-            outbound: outbound,
-            latch: latch
-        )
-        let rpcTask = startWorkerRPC(client: client, context: context)
-        do {
-            let handshake = try await latch.wait()
-            let terminator = makeTerminator(
-                client: client,
-                connectionTask: connectionTask,
-                rpcTask: rpcTask,
-                inbound: inbound,
-                outbound: outbound
-            )
-            let session = WorkerSessionAdapter(
-                inbound: inbound,
-                outbound: outbound,
-                configuration: configuration,
-                negotiatedProtocol: handshake.negotiatedProtocol,
-                terminator: terminator
-            )
-            return OpenedWorker(session: session, terminator: terminator)
-        } catch {
-            connectionTask.cancel()
-            rpcTask.cancel()
-            throw GRPCErrorMapper.publicError(from: error)
-        }
-    }
-
-    private static func startClient(
-        _ client: GRPCClient<HTTP2ClientTransport.Posix>
-    ) -> Task<Void, Never> {
-        Task {
-            try? await client.runConnections()
-        }
-    }
-
-    private static func startCallerRPC(
-        client: GRPCClient<HTTP2ClientTransport.Posix>,
-        context: RPCContext<
-            InferPeer_V1_ClientSessionResponse,
-            InferPeer_V1_ClientSessionRequest
-        >
-    ) -> Task<Void, Never> {
-        Task {
-            defer { client.beginGracefulShutdown() }
-            do {
-                let service = InferPeer_V1_InferPeerService.Client(wrapping: client)
-                try await service.clientSession(
-                    options: callOptions(context.configuration.maximumMessageBytes),
-                    requestProducer: { writer in
-                        try await writer.write(
-                            HandshakeMessageFactory.callerHello(
-                                configuration: context.configuration
-                            ))
-                        for try await message in context.outbound.internalStream() {
-                            try await writer.write(message)
-                        }
-                    },
-                    onResponse: { response in
-                        try await consumeCallerResponses(
-                            response,
-                            context: context
-                        )
-                    }
-                )
-                context.inbound.finish()
-            } catch {
-                failClientSession(
-                    error,
-                    inbound: context.inbound,
-                    outbound: context.outbound,
-                    latch: context.latch
-                )
-            }
-        }
-    }
-
-    private static func startWorkerRPC(
-        client: GRPCClient<HTTP2ClientTransport.Posix>,
-        context: RPCContext<
-            InferPeer_V1_WorkerSessionResponse,
-            InferPeer_V1_WorkerSessionRequest
-        >
-    ) -> Task<Void, Never> {
-        Task {
-            defer { client.beginGracefulShutdown() }
-            do {
-                let service = InferPeer_V1_InferPeerService.Client(wrapping: client)
-                try await service.workerSession(
-                    options: callOptions(context.configuration.maximumMessageBytes),
-                    requestProducer: { writer in
-                        try await writer.write(
-                            HandshakeMessageFactory.workerHello(
-                                configuration: context.configuration
-                            ))
-                        for try await message in context.outbound.internalStream() {
-                            try await writer.write(message)
-                        }
-                    },
-                    onResponse: { response in
-                        try await consumeWorkerResponses(
-                            response,
-                            context: context
-                        )
-                    }
-                )
-                context.inbound.finish()
-            } catch {
-                failClientSession(
-                    error,
-                    inbound: context.inbound,
-                    outbound: context.outbound,
-                    latch: context.latch
-                )
-            }
-        }
-    }
 }

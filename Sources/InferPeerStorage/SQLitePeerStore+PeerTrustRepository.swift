@@ -9,6 +9,7 @@ extension SQLitePeerStore: PeerTrustRepository {
         }
         return PeerTrustRecord(
             identity: membership.identity,
+            roles: membership.roles,
             revokedAt: membership.revokedAt
         )
     }

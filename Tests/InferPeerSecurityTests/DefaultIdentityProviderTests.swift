@@ -30,6 +30,22 @@ struct DefaultIdentityProviderTests {
         )
     }
 
+    @Test("Authorizes only explicitly approved session roles")
+    func enforcesApprovedRoles() async throws {
+        let components = try makeProvider(roles: [.caller])
+        let identity = try makePresentedIdentity()
+        try await components.provider.approve(identity)
+
+        #expect(
+            try await components.provider.trustDecision(for: identity, role: .caller)
+                == .trusted
+        )
+        #expect(
+            try await components.provider.trustDecision(for: identity, role: .worker)
+                == .unknown
+        )
+    }
+
     @Test("Revocation overrides a previously trusted certificate")
     func revokesTrust() async throws {
         let components = try makeProvider()

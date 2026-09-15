@@ -102,6 +102,12 @@ public actor WorkerController {
         activeLifecycle = lifecycle
     }
 
+    /// Requests backend cancellation and releases the slot once the request returns.
+    public func cancelAndConfirm(for attemptID: AttemptID) async throws {
+        try await requestCancellation(for: attemptID)
+        try confirmCancellation(for: attemptID)
+    }
+
     /// Records backend completion, including completion racing cancellation.
     public func complete(_ attemptID: AttemptID) throws {
         var lifecycle = try requireActiveLifecycle(for: attemptID)

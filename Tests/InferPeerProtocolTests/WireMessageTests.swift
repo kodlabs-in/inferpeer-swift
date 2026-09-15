@@ -67,6 +67,23 @@ struct WireMessageTests {
         #expect(command.payload == .cancel(command.cancel))
     }
 
+    @Test("Protocol payloads are bounded to 256 KiB")
+    func messageSizeLimit() {
+        var allowed = makeTextRequest()
+        allowed.messages[0].text = String(
+            repeating: "a",
+            count: InferPeerProtocolLimits.maximumMessageBytes - 1_024
+        )
+        var oversized = allowed
+        oversized.messages[0].text = String(
+            repeating: "b",
+            count: InferPeerProtocolLimits.maximumMessageBytes
+        )
+
+        #expect(InferPeerProtocolLimits.permits(allowed))
+        #expect(!InferPeerProtocolLimits.permits(oversized))
+    }
+
     @Test("Current support negotiates its declared protocol version")
     func currentVersionIsSelfCompatible() throws {
         let negotiated = try ProtocolNegotiator.negotiate(

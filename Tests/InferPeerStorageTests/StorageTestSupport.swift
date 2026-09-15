@@ -81,14 +81,15 @@ func makeSubmission(
     request: String = "request-1",
     caller: String = "caller-1",
     prompt: String = "Hello",
-    digestByte: UInt8 = 0xA5
+    digestByte: UInt8 = 0xA5,
+    revision: UInt64 = 1
 ) throws -> RequestSubmission {
     let requestID = try #require(RequestID(rawValue: request))
     let callerID = try #require(PeerID(rawValue: caller))
     let conversationID = try #require(ConversationID(rawValue: "conversation-1"))
     let context = try ConversationContext(
         conversationID: conversationID,
-        revision: 1,
+        revision: revision,
         messages: [try TextMessage(role: .user, text: prompt)]
     )
     let options = try GenerationOptions(

@@ -74,6 +74,7 @@ struct SQLitePeerStoreTests {
 
         try await repository.recordApproval(identity, roles: [.worker])
         #expect(try await repository.trustRecord(peerID: identity.peerID)?.identity == identity)
+        #expect(try await repository.trustRecord(peerID: identity.peerID)?.roles == [.worker])
 
         try await repository.recordRevocation(peerID: identity.peerID)
         #expect(try await repository.trustRecord(peerID: identity.peerID)?.revokedAt != nil)

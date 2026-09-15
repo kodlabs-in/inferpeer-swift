@@ -107,6 +107,12 @@ public enum RequestTransitionError: Error, Equatable, Sendable {
 
     /// Cancellation must be pending before a worker can confirm it.
     case cancellationNotPending
+
+    /// A lease command came from a prior coordinator process.
+    case staleCoordinatorIncarnation
+
+    /// A renewed lease did not advance the current deadline.
+    case leaseNotExtended
 }
 
 /// A malformed durable lifecycle snapshot that Core refuses to restore.
@@ -196,10 +202,40 @@ public struct RequestLifecycle: Equatable, Sendable {
         state = .running
     }
 
+    /// Extends the active attempt lease for the same coordinator incarnation.
+    public mutating func renewLease(
+        attemptID: AttemptID,
+        coordinatorIncarnationID: CoordinatorIncarnationID,
+        until deadline: MonotonicInstant
+    ) throws {
+        try requireActiveAttempt(attemptID, in: [.assigned, .running])
+        guard let activeAttempt else {
+            throw RequestTransitionError.missingActiveAttempt
+        }
+        guard activeAttempt.coordinatorIncarnationID == coordinatorIncarnationID else {
+            throw RequestTransitionError.staleCoordinatorIncarnation
+        }
+        guard deadline > activeAttempt.leaseDeadline else {
+            throw RequestTransitionError.leaseNotExtended
+        }
+        self.activeAttempt = ActiveAttempt(
+            attemptID: activeAttempt.attemptID,
+            workerID: activeAttempt.workerID,
+            number: activeAttempt.number,
+            coordinatorIncarnationID: activeAttempt.coordinatorIncarnationID,
+            leaseDeadline: deadline
+        )
+    }
+
     /// Returns an interrupted request to the queue or terminates it as failed.
     public mutating func interrupt(attemptID: AttemptID, willRetry: Bool) throws {
         try requireActiveAttempt(attemptID, in: [.assigned, .running])
         activeAttempt = nil
+        if cancellationState == .pending {
+            state = .cancelled
+            cancellationState = .confirmed
+            return
+        }
         state = willRetry ? .queued : .failed
     }
 

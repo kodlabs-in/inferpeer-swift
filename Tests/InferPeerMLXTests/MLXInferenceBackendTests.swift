@@ -108,6 +108,43 @@ struct MLXInferenceBackendTests {
         }
     }
 
+    @Test("Overflow never publishes terminal success after text continuity is lost")
+    func overflowCannotPublishCompletion() async throws {
+        let completion = MLXRuntimeCompletion(
+            promptTokens: 1,
+            outputTokens: 1,
+            promptDuration: .milliseconds(1),
+            generationDuration: .milliseconds(1),
+            finishReason: .stop
+        )
+        let runtime = FakeMLXRuntime(
+            session: FakeMLXSession(
+                promptTokens: 1,
+                behavior: .immediate([.text("A"), .completed(completion)])
+            )
+        )
+        let backend = MLXInferenceBackend(
+            configuration: try MLXBackendConfiguration(eventBufferingLimit: 1),
+            runtime: runtime
+        )
+        try await backend.loadModel(makeArtifact())
+        let stream = try await backend.generate(makeExecution())
+        while runtime.clearCount < 2 {
+            await Task.yield()
+        }
+
+        var received: [GenerationEvent] = []
+        do {
+            for try await event in stream {
+                received.append(event)
+            }
+            Issue.record("Expected overflow")
+        } catch {
+            #expect(error as? InferenceBackendError == .resourceExhausted)
+        }
+        #expect(received == [.textDelta(try TextDelta("A"))])
+    }
+
     @Test("Context limit includes requested output tokens")
     func enforcesContextLimit() async throws {
         let session = FakeMLXSession(promptTokens: 9, behavior: .immediate([]))

@@ -68,6 +68,21 @@ struct TextGenerationRequestTests {
         }
     }
 
+    @Test("Generation output defaults to and is capped at 512 tokens")
+    func validatesMaximumOutputTokenLimit() throws {
+        let defaultOptions = try GenerationOptions(
+            modelRequirement: .exact(try makeModelReference())
+        )
+
+        #expect(defaultOptions.maximumOutputTokens == 512)
+        #expect(throws: InferenceValidationError.invalidMaximumOutputTokens) {
+            try GenerationOptions(
+                modelRequirement: .exact(makeModelReference()),
+                maximumOutputTokens: 513
+            )
+        }
+    }
+
     private func makeModelReference() throws -> ModelReference {
         let modelID = try #require(ModelID(rawValue: "model-1"))
         return try ModelReference(modelID: modelID, revision: "revision-1")

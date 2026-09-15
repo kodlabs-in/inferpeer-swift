@@ -11,6 +11,9 @@ public enum InferPeerNodeError: Error, Equatable, Sendable {
     /// A stream capacity was zero or negative.
     case invalidStreamBufferingLimit
 
+    /// The caller recovery batch size was zero or negative.
+    case invalidCallerOutboxRecoveryLimit
+
     /// The node was started more than once.
     case alreadyStarted
 
@@ -47,6 +50,9 @@ public enum InferPeerNodeError: Error, Equatable, Sendable {
     /// No inference backend was injected by the host.
     case inferenceBackendUnavailable
 
+    /// A coordinator role was configured without its durable engine.
+    case coordinatorServiceUnavailable
+
     /// No durable model registry was injected by the host.
     case modelRegistryUnavailable
 
@@ -65,15 +71,25 @@ public struct InferPeerNodeConfiguration: Sendable {
     /// Default pending-element capacity for facade-provided streams.
     public let streamBufferingLimit: Int
 
+    /// Maximum durable caller requests restored during one join.
+    public let callerOutboxRecoveryLimit: Int
+
     /// Creates validated node configuration without starting resources.
     public init(
         roles: Set<NodeRole>,
         coordinatorEndpoint: PeerEndpoint? = nil,
-        streamBufferingLimit: Int = 32
+        streamBufferingLimit: Int = CoordinatorConfiguration.maximumStreamBufferLimit,
+        callerOutboxRecoveryLimit: Int = 100
     ) throws {
         guard !roles.isEmpty else { throw InferPeerNodeError.noRolesEnabled }
-        guard streamBufferingLimit > 0 else {
+        guard
+            (1...CoordinatorConfiguration.maximumStreamBufferLimit)
+                .contains(streamBufferingLimit)
+        else {
             throw InferPeerNodeError.invalidStreamBufferingLimit
+        }
+        guard callerOutboxRecoveryLimit > 0 else {
+            throw InferPeerNodeError.invalidCallerOutboxRecoveryLimit
         }
         if roles.contains(.coordinator), coordinatorEndpoint == nil {
             throw InferPeerNodeError.coordinatorEndpointRequired
@@ -81,6 +97,7 @@ public struct InferPeerNodeConfiguration: Sendable {
         self.roles = roles
         self.coordinatorEndpoint = coordinatorEndpoint
         self.streamBufferingLimit = streamBufferingLimit
+        self.callerOutboxRecoveryLimit = callerOutboxRecoveryLimit
     }
 }
 

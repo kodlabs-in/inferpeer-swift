@@ -3,6 +3,7 @@ import GRDB
 import InferPeerCore
 import InferPeerInference
 import InferPeerProtocol
+import SwiftProtobuf
 
 struct RequestRecord: Codable, FetchableRecord, MutablePersistableRecord, Sendable {
     static let databaseTableName = "request"
@@ -23,6 +24,8 @@ struct RequestRecord: Codable, FetchableRecord, MutablePersistableRecord, Sendab
     var createdAt: Date
     var updatedAt: Date
     var terminalAt: Date?
+    var terminalResultData: Data?
+    var terminalAttemptID: String?
 
     init(submission: RequestSubmission, timestamp: Date) throws {
         requestID = submission.requestID.rawValue
@@ -41,6 +44,8 @@ struct RequestRecord: Codable, FetchableRecord, MutablePersistableRecord, Sendab
         createdAt = timestamp
         updatedAt = timestamp
         terminalAt = nil
+        terminalResultData = nil
+        terminalAttemptID = nil
     }
 
     func storedRequest() throws -> StoredRequest {
@@ -68,7 +73,8 @@ struct RequestRecord: Codable, FetchableRecord, MutablePersistableRecord, Sendab
         return StoredRequest(
             submission: submission,
             lifecycle: lifecycle,
-            revision: revision
+            revision: revision,
+            acceptedAt: createdAt
         )
     }
 
@@ -87,6 +93,15 @@ struct RequestRecord: Codable, FetchableRecord, MutablePersistableRecord, Sendab
         updatedAt = timestamp
         terminalAt = lifecycle.state.isTerminal ? terminalAt ?? timestamp : nil
         apply(activeAttempt: lifecycle.activeAttempt)
+    }
+
+    mutating func retainTerminalResult(from events: [PendingRequestEvent]) throws {
+        for event in events.reversed() {
+            guard case .generation(.completed(let result)) = event.payload else { continue }
+            terminalResultData = try result.wireValue.serializedData()
+            terminalAttemptID = event.attemptID?.rawValue
+            return
+        }
     }
 
     private func decodedSubmission() throws -> RequestSubmission {
@@ -204,4 +219,27 @@ struct TombstoneRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     let requestID: String
     let callerID: String
     let prunedAt: Date
+    let terminalResultData: Data?
+    let terminalAttemptID: String?
+
+    func retainedTerminalResult() throws -> RetainedTerminalResult? {
+        guard let terminalResultData else { return nil }
+        let wire = try InferPeer_V1_GenerationCompleted(serializedBytes: terminalResultData)
+        let attemptID = terminalAttemptID.flatMap(AttemptID.init(rawValue:))
+        if terminalAttemptID != nil, attemptID == nil {
+            throw SQLiteStorageError.corruptData
+        }
+        return RetainedTerminalResult(
+            attemptID: attemptID,
+            result: try GenerationResult(wireValue: wire)
+        )
+    }
+}
+
+struct ConversationRevisionRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
+    static let databaseTableName = "conversationRevision"
+
+    let callerID: String
+    let conversationID: String
+    var latestRevision: Int64
 }

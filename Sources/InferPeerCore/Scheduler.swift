@@ -175,6 +175,14 @@ public struct SchedulingCandidate: Equatable, Sendable {
 
 /// Deterministic values used only when a measured scheduling input is unavailable.
 public struct SchedulingFallbacks: Equatable, Sendable {
+    /// Conservative deterministic estimates used before worker benchmarks exist.
+    public static let standard = Self(
+        validatedModelLoadDuration: .seconds(5),
+        promptProcessingDuration: .seconds(1),
+        inputTransferDuration: .milliseconds(100),
+        generationTokensPerSecond: 10
+    )
+
     /// Fallback model loading duration.
     public let modelLoadDuration: Duration
 
@@ -205,10 +213,30 @@ public struct SchedulingFallbacks: Equatable, Sendable {
         self.inputTransferDuration = inputTransferDuration
         self.generationTokensPerSecond = generationTokensPerSecond
     }
+
+    private init(
+        validatedModelLoadDuration: Duration,
+        promptProcessingDuration: Duration,
+        inputTransferDuration: Duration,
+        generationTokensPerSecond: Double
+    ) {
+        modelLoadDuration = validatedModelLoadDuration
+        self.promptProcessingDuration = promptProcessingDuration
+        self.inputTransferDuration = inputTransferDuration
+        self.generationTokensPerSecond = generationTokensPerSecond
+    }
 }
 
 /// Configurable scheduler timing and preference policy.
 public struct SchedulerConfiguration: Equatable, Sendable {
+    /// Deterministic demo defaults used until measurements replace fallback estimates.
+    public static let standard = Self(
+        validatedHeartbeatTimeout: .seconds(15),
+        warmModelPreferenceTolerance: .seconds(2),
+        lowPowerModePenalty: .seconds(5),
+        fallbacks: .standard
+    )
+
     /// Maximum elapsed time since an executable worker heartbeat.
     public let heartbeatTimeout: Duration
 
@@ -241,6 +269,18 @@ public struct SchedulerConfiguration: Equatable, Sendable {
         guard duration >= .zero else {
             throw SchedulerConfigurationError.negativeDuration
         }
+    }
+
+    private init(
+        validatedHeartbeatTimeout: Duration,
+        warmModelPreferenceTolerance: Duration,
+        lowPowerModePenalty: Duration,
+        fallbacks: SchedulingFallbacks
+    ) {
+        heartbeatTimeout = validatedHeartbeatTimeout
+        self.warmModelPreferenceTolerance = warmModelPreferenceTolerance
+        self.lowPowerModePenalty = lowPowerModePenalty
+        self.fallbacks = fallbacks
     }
 }
 

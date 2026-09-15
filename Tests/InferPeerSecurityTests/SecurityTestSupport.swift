@@ -58,7 +58,11 @@ actor MemoryTrustRepository: PeerTrustRepository {
         _ identity: PresentedPeerIdentity,
         roles: Set<NodeRole>
     ) {
-        records[identity.peerID] = PeerTrustRecord(identity: identity, revokedAt: nil)
+        records[identity.peerID] = PeerTrustRecord(
+            identity: identity,
+            roles: roles,
+            revokedAt: nil
+        )
         approvedRoles = roles
     }
 
@@ -66,7 +70,11 @@ actor MemoryTrustRepository: PeerTrustRepository {
         guard let record = records[peerID] else {
             throw SecurityTestError.missingTrustRecord
         }
-        records[peerID] = PeerTrustRecord(identity: record.identity, revokedAt: Date())
+        records[peerID] = PeerTrustRecord(
+            identity: record.identity,
+            roles: record.roles,
+            revokedAt: Date()
+        )
     }
 
     func approvedRoleSet() -> Set<NodeRole> {

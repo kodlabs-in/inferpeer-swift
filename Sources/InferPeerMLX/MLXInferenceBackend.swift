@@ -204,7 +204,7 @@ extension MLXInferenceBackend {
         session: any MLXModelSession
     ) -> GenerationEventStream {
         let pair = GenerationEventStream.makeStream(
-            bufferingPolicy: .bufferingNewest(configuration.eventBufferingLimit)
+            bufferingPolicy: .bufferingOldest(configuration.eventBufferingLimit)
         )
         generationContinuation = pair.continuation
         pair.continuation.onTermination = { [weak self] termination in

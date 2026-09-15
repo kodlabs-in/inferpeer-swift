@@ -63,7 +63,11 @@ func makeGRPCEndpoint() throws -> PeerEndpoint {
 }
 
 func makeNetworkPolicy(endpoint: PeerEndpoint) throws -> GRPCNetworkPolicy {
-    try GRPCNetworkPolicy(interfaceName: "lo0", allowedEndpoints: [endpoint])
+    try GRPCNetworkPolicy(
+        interfaceName: "lo0",
+        allowedEndpoints: [endpoint],
+        allowsLoopback: true
+    )
 }
 
 func makeMetadata(
@@ -81,14 +85,14 @@ func makeMetadata(
 }
 
 func first<Element: Sendable>(
-    in stream: AsyncThrowingStream<Element, any Error>
+    in stream: TransportMessageStream<Element>
 ) async throws -> Element {
     var iterator = stream.makeAsyncIterator()
     return try #require(try await iterator.next())
 }
 
 func firstTask<Element: Sendable>(
-    in stream: AsyncThrowingStream<Element, any Error>
+    in stream: TransportMessageStream<Element>
 ) -> Task<Element, any Error> {
     Task { try await first(in: stream) }
 }

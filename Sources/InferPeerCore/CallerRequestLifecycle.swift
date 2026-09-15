@@ -83,6 +83,14 @@ public struct CallerRequestLifecycle: Equatable, Sendable {
         phase = .awaitingAcceptance
     }
 
+    /// Returns an unaccepted submission to its durable outbox after coordinator rejection.
+    public mutating func markSubmissionRejected() throws {
+        guard phase == .awaitingAcceptance else {
+            throw CallerRequestTransitionError.invalidPhase
+        }
+        phase = .pendingOutbox
+    }
+
     /// Records the coordinator's post-commit acceptance acknowledgement.
     public mutating func accept(coordinatorState: RequestState) throws {
         guard phase == .awaitingAcceptance else {
@@ -100,9 +108,12 @@ public struct CallerRequestLifecycle: Equatable, Sendable {
         if let latestEventCursor, eventCursor <= latestEventCursor {
             return .duplicate
         }
-        guard canRemoveFromOutbox else {
-            throw CallerRequestTransitionError.invalidPhase
+        if phase == .awaitingAcceptance {
+            phase = Self.phase(for: coordinatorState)
+            latestEventCursor = eventCursor
+            return .new
         }
+        guard canRemoveFromOutbox else { throw CallerRequestTransitionError.invalidPhase }
         guard !Self.isTerminal(phase) else {
             throw CallerRequestTransitionError.eventAfterTerminal
         }
@@ -125,7 +136,9 @@ public struct CallerRequestLifecycle: Equatable, Sendable {
 
     /// Applies cancellation progress reported by the coordinator.
     public mutating func applyCancellation(_ state: CancellationState) throws {
-        guard canRemoveFromOutbox else { throw CallerRequestTransitionError.invalidPhase }
+        guard canRemoveFromOutbox || phase == .awaitingAcceptance else {
+            throw CallerRequestTransitionError.invalidPhase
+        }
         cancellationState = state
         if state == .confirmed {
             phase = .terminal(.cancelled)

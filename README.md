@@ -28,7 +28,7 @@ not link MLX into caller-only or coordinator-only applications.
 
 ## Requirements
 
-- Swift 6.1 or later
+- Swift 6.3 or later
 - macOS 15 or later, or iOS/iPadOS 18 or later
 - `swift-format` and SwiftLint for local quality checks
 - Buf 1.71 or later for Protobuf linting and generation
@@ -89,6 +89,19 @@ schema change, regenerate them with:
 ```sh
 make generate-protocol
 ```
+
+`make check` also builds `Fixtures/CallerOnlyConsumer`, an independent downstream package that
+imports only `InferPeer`. This protects the caller-only integration boundary and ensures the MLX
+adapter remains opt-in.
+
+## Documentation
+
+- [Compatibility report](COMPATIBILITY.md)
+- [Security boundary and host responsibilities](SECURITY.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Experimental release checklist](RELEASE_CHECKLIST.md)
+- [Changelog](CHANGELOG.md)
+- DocC overview in `Sources/InferPeer/InferPeer.docc`
 
 ## Current validation boundary
 

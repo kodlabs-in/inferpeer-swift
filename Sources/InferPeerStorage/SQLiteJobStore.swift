@@ -31,9 +31,23 @@ public final class SQLiteJobStore: JobStore, Sendable {
                 try JobStoreDatabase.accept(
                     submission,
                     at: timestamp,
-                    maximumDatabaseBytes: configuration.maximumDatabaseBytes,
+                    limits: JobStoreDatabase.AdmissionLimits(
+                        databaseBytes: configuration.maximumDatabaseBytes,
+                        pendingRequests: configuration.maximumPendingRequests,
+                        pendingRequestsPerCaller: configuration.maximumPendingRequestsPerCaller
+                    ),
                     in: database
                 )
+            }
+        }
+    }
+
+    /// Returns queued or active requests in stable admission order for coordinator recovery.
+    public func nonterminalRequests(limit: Int) async throws -> [StoredRequest] {
+        guard limit > 0 else { throw SQLiteStorageError.invalidReplayLimit }
+        return try await withMappedStorageErrors {
+            try await database.read { database in
+                try JobStoreDatabase.nonterminalRequests(limit: limit, in: database)
             }
         }
     }

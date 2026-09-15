@@ -1,5 +1,5 @@
 import InferPeerCore
-import InferPeerGRPC
+@testable import InferPeerGRPC
 import InferPeerProtocol
 import Testing
 
@@ -87,6 +87,36 @@ struct GRPCPeerTransportTests {
         await harness.stop()
     }
 
+    @Test("slow worker consumer preserves control traffic after saturated text deltas")
+    func slowWorkerConsumerPreservesControlTraffic() async throws {
+        let harness = try await GRPCTestHarness.make(clientRoles: [.worker])
+        let inboundTask = firstTask(in: harness.listener.sessions(bufferingLimit: 4))
+        let worker = try await harness.clientTransport.connectWorker(to: harness.endpoint)
+        let inbound = try await inboundTask.value
+        guard case .worker(let coordinator) = inbound else {
+            Issue.record("Expected worker session")
+            return
+        }
+        let requests = coordinator.requests(bufferingLimit: 4)
+        let producer = Task {
+            for sequence in 2...5 {
+                try await worker.send(
+                    workerTextRequest(sequence: UInt64(sequence), harness: harness)
+                )
+            }
+            try await worker.send(workerLeaseRequest(sequence: 6, harness: harness))
+            try await worker.send(workerTextRequest(sequence: 7, harness: harness))
+        }
+        try await Task.sleep(for: .milliseconds(50))
+
+        let received = try await collect(6, from: requests)
+        try await producer.value
+
+        #expect(received.map(\.metadata.sequence) == Array(2...7).map(UInt64.init))
+        #expect(received[4].leaseRenewal.requestedDurationMilliseconds == 1_000)
+        await harness.stop()
+    }
+
     @Test("coordinator rejects a certificate-bound but unauthorized peer")
     func unauthorizedPeerIsRejected() async throws {
         let harness = try await GRPCTestHarness.make(
@@ -112,6 +142,24 @@ struct GRPCPeerTransportTests {
             _ = try await harness.clientTransport.connectCaller(to: harness.endpoint)
         }
 
+        await harness.stop()
+    }
+
+    @Test("closing a client session releases its transport retention")
+    func closedSessionIsReleased() async throws {
+        let harness = try await GRPCTestHarness.make(clientRoles: [.caller])
+        let inboundTask = firstTask(in: harness.listener.sessions(bufferingLimit: 4))
+        let caller = try await harness.clientTransport.connectCaller(to: harness.endpoint)
+        _ = try await inboundTask.value
+        #expect(await harness.clientTransport.activeClientSessionCount() == 1)
+
+        await caller.close()
+        for _ in 0..<10 {
+            if await harness.clientTransport.activeClientSessionCount() == 0 { break }
+            await Task.yield()
+        }
+
+        #expect(await harness.clientTransport.activeClientSessionCount() == 0)
         await harness.stop()
     }
 
@@ -147,6 +195,57 @@ struct GRPCPeerTransportTests {
         }
 
         await harness.stop()
+    }
+
+}
+
+private func workerTextRequest(
+    sequence: UInt64,
+    harness: GRPCTestHarness
+) -> InferPeer_V1_WorkerSessionRequest {
+    InferPeer_V1_WorkerSessionRequest.with {
+        $0.metadata = makeMetadata(
+            clusterID: harness.clusterID,
+            senderID: harness.clientIdentity.credentials.identity.peerID,
+            sequence: sequence
+        )
+        $0.generationEvent.textDelta.text = "delta-\(sequence)"
+    }
+}
+
+private func workerLeaseRequest(
+    sequence: UInt64,
+    harness: GRPCTestHarness
+) -> InferPeer_V1_WorkerSessionRequest {
+    InferPeer_V1_WorkerSessionRequest.with {
+        $0.metadata = makeMetadata(
+            clusterID: harness.clusterID,
+            senderID: harness.clientIdentity.credentials.identity.peerID,
+            sequence: sequence
+        )
+        $0.leaseRenewal.requestedDurationMilliseconds = 1_000
+    }
+}
+
+private func collect<Element: Sendable>(
+    _ count: Int,
+    from stream: TransportMessageStream<Element>
+) async throws -> [Element] {
+    try await withThrowingTaskGroup(of: [Element].self) { group in
+        group.addTask {
+            var iterator = stream.makeAsyncIterator()
+            var elements: [Element] = []
+            while elements.count < count {
+                elements.append(try #require(try await iterator.next()))
+            }
+            return elements
+        }
+        group.addTask {
+            try await Task.sleep(for: .seconds(3))
+            throw InferPeerGRPCError.deadlineExceeded
+        }
+        defer { group.cancelAll() }
+        return try await group.next() ?? []
     }
 }
 

@@ -39,6 +39,23 @@ struct WorkerControllerTests {
         #expect(await controller.lifecycle()?.state == .cancelled)
     }
 
+    @Test("A terminal cancellation releases the serialized worker slot")
+    func cancellationAllowsNextAttempt() async throws {
+        let backend = RecordingCoreBackend()
+        let first = try makeAssignment(attemptID: "attempt-1", leaseDeadline: 20)
+        let second = try makeAssignment(attemptID: "attempt-2", leaseDeadline: 20)
+        let controller = WorkerController(
+            backend: backend,
+            clock: FixedClock(nanoseconds: 10)
+        )
+
+        _ = try await controller.start(first)
+        try await controller.cancelAndConfirm(for: first.execution.attemptID)
+        _ = try await controller.start(second)
+
+        #expect(await backend.executions() == [first.execution, second.execution])
+    }
+
     @Test("Expires a lease using only monotonic time")
     func expiresLease() async throws {
         let backend = RecordingCoreBackend()
@@ -54,9 +71,12 @@ struct WorkerControllerTests {
         #expect(await backend.executions().isEmpty)
     }
 
-    private func makeAssignment(leaseDeadline: UInt64) throws -> WorkerExecutionAssignment {
+    private func makeAssignment(
+        attemptID: String = "attempt-1",
+        leaseDeadline: UInt64
+    ) throws -> WorkerExecutionAssignment {
         let requestID = try #require(RequestID(rawValue: "request-1"))
-        let attemptID = try #require(AttemptID(rawValue: "attempt-1"))
+        let attemptID = try #require(AttemptID(rawValue: attemptID))
         let conversationID = try #require(ConversationID(rawValue: "conversation-1"))
         let coordinatorID = try #require(
             CoordinatorIncarnationID(rawValue: "coordinator-1")

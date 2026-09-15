@@ -10,6 +10,27 @@ public protocol SecretStore: Sendable {
 
     /// Removes bytes for an exact logical key when present.
     func removeData(forKey key: String) throws
+
+    /// Atomically removes bytes only when they still equal the expected value.
+    ///
+    /// This operation lets multiple authority instances safely consume the same
+    /// single-use record without a read-then-delete race.
+    func removeData(forKey key: String, ifEqualTo expectedData: Data) throws -> Bool
+}
+
+public extension SecretStore {
+    /// Provides process-wide atomicity for stores that do not supply a stronger implementation.
+    func removeData(forKey key: String, ifEqualTo expectedData: Data) throws -> Bool {
+        try SecretStoreAtomicity.lock.withLock {
+            guard try data(forKey: key) == expectedData else { return false }
+            try removeData(forKey: key)
+            return true
+        }
+    }
+}
+
+private enum SecretStoreAtomicity {
+    static let lock = NSLock()
 }
 
 enum SecuritySecretKey {

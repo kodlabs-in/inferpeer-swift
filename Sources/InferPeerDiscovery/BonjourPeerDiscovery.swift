@@ -126,7 +126,11 @@ public actor BonjourPeerDiscovery: PeerDiscovery {
     }
 
     private func resolve(_ endpoint: NWEndpoint) async throws -> DiscoveredPeer {
-        let resolved = try await NWEndpointResolver.resolve(endpoint, queue: queue)
+        let resolved = try await ResolutionAttemptRunner.run(
+            policy: configuration.resolutionPolicy
+        ) { _ in
+            try await NWEndpointResolver.resolve(endpoint, queue: self.queue)
+        }
         guard case .hostPort(let host, let port) = resolved else {
             throw PeerDiscoveryError.resolutionFailed
         }
@@ -155,6 +159,47 @@ public actor BonjourPeerDiscovery: PeerDiscovery {
         resolvedPeers.removeAll()
         continuation?.finish(throwing: error)
         continuation = nil
+    }
+}
+
+enum ResolutionAttemptRunner {
+    static func run<Value: Sendable>(
+        policy: BonjourResolutionPolicy,
+        operation: @escaping @Sendable (Int) async throws -> Value
+    ) async throws -> Value {
+        for attempt in 1...policy.maximumAttempts {
+            do {
+                return try await withTimeout(policy.timeout) {
+                    try await operation(attempt)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard attempt < policy.maximumAttempts else {
+                    throw PeerDiscoveryError.resolutionFailed
+                }
+                try await Task.sleep(for: .seconds(policy.retryDelay))
+            }
+        }
+        throw PeerDiscoveryError.resolutionFailed
+    }
+
+    private static func withTimeout<Value: Sendable>(
+        _ timeout: TimeInterval,
+        operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw PeerDiscoveryError.resolutionFailed
+            }
+            defer { group.cancelAll() }
+            guard let value = try await group.next() else {
+                throw PeerDiscoveryError.resolutionFailed
+            }
+            return value
+        }
     }
 }
 

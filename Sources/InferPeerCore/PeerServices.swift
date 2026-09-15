@@ -150,14 +150,44 @@ public protocol IdentityProvider: Sendable {
     /// Returns persisted trust for an authenticated certificate identity.
     func trustDecision(for identity: PresentedPeerIdentity) async throws -> PeerTrustDecision
 
+    /// Returns persisted trust for the exact identity and requested session role.
+    func trustDecision(
+        for identity: PresentedPeerIdentity,
+        role: NodeRole
+    ) async throws -> PeerTrustDecision
+
     /// Approves a presented identity after explicit host confirmation.
     func approve(_ identity: PresentedPeerIdentity) async throws
 
     /// Validates and consumes a single-use pairing invitation.
     func consume(_ invitation: PairingInvitation) async throws
 
+    /// Consumes invitation credentials received by the issuing coordinator.
+    func consume(invitationID: InvitationID, proof: Data) async throws
+
     /// Revokes future access and invalidates active trust for a peer.
     func revoke(peerID: PeerID) async throws
+}
+
+public extension IdentityProvider {
+    /// Existing providers fail closed for role-scoped authorization until they implement it.
+    func trustDecision(
+        for identity: PresentedPeerIdentity,
+        role: NodeRole
+    ) async throws -> PeerTrustDecision {
+        let decision = try await trustDecision(for: identity)
+        return decision == .trusted ? .unknown : decision
+    }
+
+    /// Existing providers fail closed until coordinator-side proof consumption is implemented.
+    func consume(invitationID: InvitationID, proof: Data) throws {
+        throw IdentityProviderError.invitationProofUnsupported
+    }
+}
+
+/// Identity-provider behavior unavailable from an older custom implementation.
+public enum IdentityProviderError: Error, Equatable, Sendable {
+    case invitationProofUnsupported
 }
 
 /// A discovery result that remains untrusted until identity verification succeeds.

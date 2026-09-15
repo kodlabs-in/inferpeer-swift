@@ -8,12 +8,21 @@ import NIOSSL
 import X509
 
 final class VerifiedPeerRegistry: @unchecked Sendable {
+    static let defaultMaximumEntries = 256
+
     private let lock = NSLock()
     private var identities: [Certificate: PresentedPeerIdentity] = [:]
+    private var insertionOrder: [Certificate] = []
     private let verifier: GRPCCertificateVerifier
+    private let maximumEntries: Int
 
-    init(verifier: GRPCCertificateVerifier) {
+    init(
+        verifier: GRPCCertificateVerifier,
+        maximumEntries: Int = defaultMaximumEntries
+    ) {
+        precondition(maximumEntries > 0)
         self.verifier = verifier
+        self.maximumEntries = maximumEntries
     }
 
     func verificationCallback(
@@ -47,9 +56,10 @@ final class VerifiedPeerRegistry: @unchecked Sendable {
 
     func identity(for certificate: Certificate) throws -> PresentedPeerIdentity {
         try lock.withLock {
-            guard let identity = identities[certificate] else {
+            guard let identity = identities.removeValue(forKey: certificate) else {
                 throw InferPeerGRPCError.unauthenticated
             }
+            insertionOrder.removeAll { $0 == certificate }
             return identity
         }
     }
@@ -57,18 +67,36 @@ final class VerifiedPeerRegistry: @unchecked Sendable {
     func identity(matching fingerprint: CertificateFingerprint) throws -> PresentedPeerIdentity {
         try lock.withLock {
             guard
-                let identity = identities.values.first(where: {
-                    $0.certificateFingerprint == fingerprint
+                let entry = identities.first(where: {
+                    $0.value.certificateFingerprint == fingerprint
                 })
             else {
                 throw InferPeerGRPCError.unauthenticated
             }
-            return identity
+            identities[entry.key] = nil
+            insertionOrder.removeAll { $0 == entry.key }
+            return entry.value
         }
     }
 
-    private func record(_ identity: PresentedPeerIdentity, for certificate: Certificate) {
-        lock.withLock { identities[certificate] = identity }
+    func record(_ identity: PresentedPeerIdentity, for certificate: Certificate) {
+        lock.withLock {
+            if identities[certificate] == nil {
+                evictOldestIfFull()
+                insertionOrder.append(certificate)
+            }
+            identities[certificate] = identity
+        }
+    }
+
+    func recordedIdentityCount() -> Int {
+        lock.withLock { identities.count }
+    }
+
+    private func evictOldestIfFull() {
+        guard identities.count >= maximumEntries else { return }
+        let certificate = insertionOrder.removeFirst()
+        identities[certificate] = nil
     }
 }
 

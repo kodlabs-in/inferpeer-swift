@@ -114,20 +114,34 @@ public struct GRPCNetworkPolicy: Hashable, Sendable {
     public let interfaceName: String
     /// The complete set of endpoints this transport instance may use.
     public let allowedEndpoints: Set<PeerEndpoint>
+    /// Whether loopback endpoints are permitted for local test harnesses.
+    public let allowsLoopback: Bool
     let interfaceIndex: UInt32
 
-    /// Production hosts must supply a validated Wi-Fi interface. Numeric endpoints prevent DNS
-    /// redirection outside the approved route; loopback is useful only for local tests.
-    public init(interfaceName: String, allowedEndpoints: Set<PeerEndpoint>) throws {
+    /// Production hosts must supply a validated Wi-Fi interface. Loopback requires explicit opt-in.
+    public init(
+        interfaceName: String,
+        allowedEndpoints: Set<PeerEndpoint>,
+        allowsLoopback: Bool = false
+    ) throws {
         let index = if_nametoindex(interfaceName)
         guard index > 0, !allowedEndpoints.isEmpty else {
             throw InferPeerGRPCError.invalidConfiguration
         }
-        guard allowedEndpoints.allSatisfy(Self.isNumericNonWildcardEndpoint) else {
+        guard
+            allowedEndpoints.allSatisfy({
+                Self.isLocalEndpoint(
+                    $0,
+                    interfaceName: interfaceName,
+                    allowsLoopback: allowsLoopback
+                )
+            })
+        else {
             throw InferPeerGRPCError.invalidConfiguration
         }
         self.interfaceName = interfaceName
         self.allowedEndpoints = allowedEndpoints
+        self.allowsLoopback = allowsLoopback
         interfaceIndex = index
     }
 
@@ -137,22 +151,56 @@ public struct GRPCNetworkPolicy: Hashable, Sendable {
         }
     }
 
-    private static func isNumericNonWildcardEndpoint(_ endpoint: PeerEndpoint) -> Bool {
-        guard endpoint.host != "0.0.0.0", endpoint.host != "::" else { return false }
+    private static func isLocalEndpoint(
+        _ endpoint: PeerEndpoint,
+        interfaceName: String,
+        allowsLoopback: Bool
+    ) -> Bool {
+        guard let host = unscopedHost(endpoint.host, matching: interfaceName) else { return false }
         var ipv4 = in_addr()
-        var ipv6 = in6_addr()
-        return endpoint.host.withCString { address in
-            inet_pton(AF_INET, address, &ipv4) == 1 || inet_pton(AF_INET6, address, &ipv6) == 1
+        if host.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
+            return isLocalIPv4(ipv4, allowsLoopback: allowsLoopback)
         }
+        var ipv6 = in6_addr()
+        guard host.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else { return false }
+        return isLocalIPv6(ipv6, allowsLoopback: allowsLoopback)
+    }
+
+    private static func unscopedHost(_ host: String, matching interfaceName: String) -> String? {
+        let components = host.split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false)
+        guard components.count > 1 else { return host }
+        guard components.count == 2, components[1] == Substring(interfaceName) else { return nil }
+        return String(components[0])
+    }
+
+    private static func isLocalIPv4(_ address: in_addr, allowsLoopback: Bool) -> Bool {
+        let value = UInt32(bigEndian: address.s_addr)
+        let first = UInt8((value >> 24) & 0xFF)
+        let second = UInt8((value >> 16) & 0xFF)
+        if first == 10 || (first == 172 && (16...31).contains(second)) { return true }
+        if first == 192 && second == 168 { return true }
+        if first == 169 && second == 254 { return true }
+        return allowsLoopback && first == 127
+    }
+
+    private static func isLocalIPv6(_ address: in6_addr, allowsLoopback: Bool) -> Bool {
+        let bytes = withUnsafeBytes(of: address) { Array($0) }
+        if bytes[0] & 0xFE == 0xFC { return true }
+        if bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80 { return true }
+        return allowsLoopback && bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last == 1
     }
 }
 
 /// Immutable policy and identity inputs for one concrete gRPC transport adapter.
 public struct GRPCTransportConfiguration: Sendable {
-    /// Default maximum uncompressed Protobuf message size: one MiB.
-    public static let defaultMaximumMessageBytes = 1_048_576
-    /// Default number of retained messages per bounded application stream.
-    public static let defaultStreamBufferLimit = 64
+    /// Hard maximum uncompressed Protobuf message size: 256 KiB.
+    public static let defaultMaximumMessageBytes = InferPeerProtocolLimits.maximumMessageBytes
+    /// Hard maximum retained application payload: one MiB per stream.
+    public static let maximumBufferedBytes = 1_024 * 1_024
+    /// Default number of retained maximum-sized messages per application stream.
+    public static let defaultStreamBufferLimit = 4
+    /// Default maximum duration for the peer's first authenticated session response.
+    public static let defaultHandshakeTimeout = Duration.seconds(10)
 
     /// The only cluster identifier accepted by the adapter.
     public let clusterID: ClusterID
@@ -170,6 +218,8 @@ public struct GRPCTransportConfiguration: Sendable {
     public let streamBufferLimit: Int
     /// Maximum uncompressed bytes accepted for one Protobuf message.
     public let maximumMessageBytes: Int
+    /// Maximum time allowed for session negotiation after connecting.
+    public let handshakeTimeout: Duration
 
     let certificateVerifier: GRPCCertificateVerifier
     let sessionAuthorizer: GRPCSessionAuthorizer
@@ -189,7 +239,8 @@ public struct GRPCTransportConfiguration: Sendable {
         sessionAuthorizer: GRPCSessionAuthorizer,
         networkPolicy: GRPCNetworkPolicy,
         streamBufferLimit: Int = Self.defaultStreamBufferLimit,
-        maximumMessageBytes: Int = Self.defaultMaximumMessageBytes
+        maximumMessageBytes: Int = Self.defaultMaximumMessageBytes,
+        handshakeTimeout: Duration = Self.defaultHandshakeTimeout
     ) throws {
         let pins = try Self.makePins(coordinatorPins)
         try Self.validateIdentity(
@@ -201,7 +252,8 @@ public struct GRPCTransportConfiguration: Sendable {
             pinCount: pins.count,
             suppliedPinCount: coordinatorPins.count,
             streamBufferLimit: streamBufferLimit,
-            maximumMessageBytes: maximumMessageBytes
+            maximumMessageBytes: maximumMessageBytes,
+            handshakeTimeout: handshakeTimeout
         )
         self.clusterID = clusterID
         self.credentials = credentials
@@ -215,6 +267,7 @@ public struct GRPCTransportConfiguration: Sendable {
         self.networkPolicy = networkPolicy
         self.streamBufferLimit = streamBufferLimit
         self.maximumMessageBytes = maximumMessageBytes
+        self.handshakeTimeout = handshakeTimeout
     }
 
     func coordinatorFingerprint(for endpoint: PeerEndpoint) throws -> CertificateFingerprint {
@@ -222,6 +275,40 @@ public struct GRPCTransportConfiguration: Sendable {
             throw InferPeerGRPCError.coordinatorPinMissing
         }
         return fingerprint
+    }
+
+    func applying(_ invitation: PairingInvitation, to endpoint: PeerEndpoint) throws -> Self {
+        guard invitation.coordinator.endpoint == endpoint else {
+            throw InferPeerGRPCError.invalidConfiguration
+        }
+        guard invitation.expiresAt > Date() else {
+            throw InferPeerGRPCError.invitationExpired
+        }
+        try networkPolicy.validate(endpoint)
+        let invitationCredentials = try GRPCInvitationCredentials(
+            invitationID: invitation.invitationID,
+            proof: invitation.proof
+        )
+        return try Self(
+            clusterID: invitation.coordinator.clusterID,
+            credentials: credentials,
+            enabledRoles: enabledRoles,
+            coordinatorIncarnationID: coordinatorIncarnationID,
+            protocolSupport: protocolSupport,
+            invitation: invitationCredentials,
+            coordinatorPins: [
+                GRPCCoordinatorPin(
+                    endpoint: endpoint,
+                    certificateFingerprint: invitation.coordinator.certificateFingerprint
+                )
+            ],
+            certificateVerifier: certificateVerifier,
+            sessionAuthorizer: sessionAuthorizer,
+            networkPolicy: networkPolicy,
+            streamBufferLimit: streamBufferLimit,
+            maximumMessageBytes: maximumMessageBytes,
+            handshakeTimeout: handshakeTimeout
+        )
     }
 
     private static func validateIdentity(
@@ -247,9 +334,19 @@ public struct GRPCTransportConfiguration: Sendable {
         pinCount: Int,
         suppliedPinCount: Int,
         streamBufferLimit: Int,
-        maximumMessageBytes: Int
+        maximumMessageBytes: Int,
+        handshakeTimeout: Duration
     ) throws {
-        guard pinCount == suppliedPinCount, streamBufferLimit > 0, maximumMessageBytes > 0 else {
+        guard maximumMessageBytes > 0 else {
+            throw InferPeerGRPCError.invalidConfiguration
+        }
+        let maximumElements = maximumBufferedBytes / maximumMessageBytes
+        guard pinCount == suppliedPinCount,
+            streamBufferLimit > 1,
+            maximumMessageBytes <= defaultMaximumMessageBytes,
+            streamBufferLimit <= maximumElements,
+            handshakeTimeout > .zero
+        else {
             throw InferPeerGRPCError.invalidConfiguration
         }
     }

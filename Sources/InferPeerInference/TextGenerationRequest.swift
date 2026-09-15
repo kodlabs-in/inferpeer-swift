@@ -143,6 +143,9 @@ public struct ModelRequirement: Hashable, Sendable {
 
 /// Model and decoding options for one text generation.
 public struct GenerationOptions: Hashable, Sendable {
+    /// Demo default and upper bound until a selected model imposes a smaller context limit.
+    public static let defaultMaximumOutputTokens: UInt32 = 512
+
     /// The exact model or explicit permitted model set.
     public let modelRequirement: ModelRequirement
 
@@ -158,11 +161,11 @@ public struct GenerationOptions: Hashable, Sendable {
     /// Creates validated generation options.
     public init(
         modelRequirement: ModelRequirement,
-        maximumOutputTokens: UInt32,
+        maximumOutputTokens: UInt32 = Self.defaultMaximumOutputTokens,
         sampling: SamplingOptions = .default,
         deadline: Date? = nil
     ) throws {
-        guard maximumOutputTokens > 0 else {
+        guard (1...Self.defaultMaximumOutputTokens).contains(maximumOutputTokens) else {
             throw InferenceValidationError.invalidMaximumOutputTokens
         }
         try Self.validateDeadline(deadline)

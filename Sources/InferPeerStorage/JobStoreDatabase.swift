@@ -5,21 +5,34 @@ import InferPeerProtocol
 import SwiftProtobuf
 
 enum JobStoreDatabase {
+    struct AdmissionLimits {
+        let databaseBytes: UInt64
+        let pendingRequests: Int
+        let pendingRequestsPerCaller: Int
+    }
+
     static func accept(
         _ submission: RequestSubmission,
         at timestamp: Date,
-        maximumDatabaseBytes: UInt64,
+        limits: AdmissionLimits,
         in database: Database
     ) throws -> RequestAcceptance {
         if let tombstone = try TombstoneRecord.fetchOne(
             database, key: submission.requestID.rawValue)
         {
             try requireOwner(submission.callerID, storedCallerID: tombstone.callerID)
-            throw RequestPersistenceError.replayExpired
+            throw RequestPersistenceError.replayExpired(try tombstone.retainedTerminalResult())
         }
         if let existing = try RequestRecord.fetchOne(database, key: submission.requestID.rawValue) {
             return try duplicateAcceptance(for: submission, existing: existing)
         }
+        try advanceConversationRevision(for: submission, in: database)
+        try requireAdmissionCapacity(
+            callerID: submission.callerID,
+            maximumPendingRequests: limits.pendingRequests,
+            maximumPendingRequestsPerCaller: limits.pendingRequestsPerCaller,
+            in: database
+        )
 
         var record = try RequestRecord(submission: submission, timestamp: timestamp)
         try record.insert(database)
@@ -29,8 +42,25 @@ enum JobStoreDatabase {
             timestamp: timestamp,
             in: database
         )
-        try DatabaseQuota.enforce(maximumDatabaseBytes, in: database)
+        try DatabaseQuota.enforce(limits.databaseBytes, in: database)
         return .accepted(try record.storedRequest())
+    }
+
+    static func nonterminalRequests(
+        limit: Int,
+        in database: Database
+    ) throws -> [StoredRequest] {
+        let records = try RequestRecord.fetchAll(
+            database,
+            sql: """
+                SELECT * FROM request
+                WHERE terminalAt IS NULL
+                ORDER BY createdAt, requestID
+                LIMIT ?
+                """,
+            arguments: [limit]
+        )
+        return try records.map { try $0.storedRequest() }
     }
 
     static func request(
@@ -69,6 +99,7 @@ enum JobStoreDatabase {
             revision: storedRequest.revision + 1,
             timestamp: timestamp
         )
+        try record.retainTerminalResult(from: mutation.events)
         try record.update(database)
         for event in mutation.events {
             try insertEvent(
@@ -140,8 +171,10 @@ enum JobStoreDatabase {
     ) throws {
         try database.execute(
             sql: """
-                INSERT OR IGNORE INTO requestTombstone (requestID, callerID, prunedAt)
-                SELECT requestID, callerID, ? FROM request
+                INSERT OR IGNORE INTO requestTombstone (
+                    requestID, callerID, prunedAt, terminalResultData, terminalAttemptID
+                )
+                SELECT requestID, callerID, ?, terminalResultData, terminalAttemptID FROM request
                 WHERE terminalAt IS NOT NULL AND terminalAt < ?
                 """,
             arguments: [timestamp, cutoff]
@@ -150,59 +183,5 @@ enum JobStoreDatabase {
             sql: "DELETE FROM request WHERE terminalAt IS NOT NULL AND terminalAt < ?",
             arguments: [cutoff]
         )
-    }
-
-    private static func duplicateAcceptance(
-        for submission: RequestSubmission,
-        existing: RequestRecord
-    ) throws -> RequestAcceptance {
-        try requireOwner(submission.callerID, storedCallerID: existing.callerID)
-        let requestData = try submission.request.wireValue.serializedData()
-        guard existing.contentDigest == submission.contentDigest.bytes,
-            existing.requestData == requestData
-        else {
-            throw RequestPersistenceError.requestConflict
-        }
-        return .duplicate(try existing.storedRequest())
-    }
-
-    private static func requireReplayAccess(
-        requestID: RequestID,
-        callerID: PeerID,
-        in database: Database
-    ) throws {
-        if let record = try RequestRecord.fetchOne(database, key: requestID.rawValue) {
-            try requireOwner(callerID, storedCallerID: record.callerID)
-            return
-        }
-        if let tombstone = try TombstoneRecord.fetchOne(database, key: requestID.rawValue) {
-            try requireOwner(callerID, storedCallerID: tombstone.callerID)
-            throw RequestPersistenceError.replayExpired
-        }
-        throw RequestPersistenceError.requestNotFound
-    }
-
-    private static func requireOwner(_ callerID: PeerID, storedCallerID: String) throws {
-        guard callerID.rawValue == storedCallerID else {
-            throw RequestPersistenceError.accessDenied
-        }
-    }
-
-    private static func insertEvent(
-        _ event: PendingRequestEvent,
-        requestID: RequestID,
-        timestamp: Date,
-        in database: Database
-    ) throws {
-        let encoded = try RequestEventCodec.encode(event.payload)
-        var record = EventRecord(
-            cursor: nil,
-            requestID: requestID.rawValue,
-            attemptID: event.attemptID?.rawValue,
-            kind: encoded.kind.rawValue,
-            payloadData: encoded.data,
-            committedAt: timestamp
-        )
-        try record.insert(database)
     }
 }

@@ -87,6 +87,14 @@ message RequestFailed {
   reserved 2 to 9;
 }
 
+// CommandRejected reports that a command did not durably change coordinator state.
+message CommandRejected {
+  ProtocolError error = 1;
+  optional GenerationCompleted retained_terminal_result = 2;
+
+  reserved 3 to 9;
+}
+
 // ClientSessionRequest carries one caller command. SessionHello must be sent first.
 message ClientSessionRequest {
   MessageMetadata metadata = 1;
@@ -116,6 +124,7 @@ message ClientSessionResponse {
     GenerationEvent generation_event = 14;
     CancellationUpdated cancellation_updated = 15;
     RequestFailed request_failed = 16;
+    CommandRejected command_rejected = 17;
   }
 }
 
@@ -125,8 +134,9 @@ message AttemptAssignment {
   uint32 attempt_number = 2;
   uint64 lease_duration_milliseconds = 3;
   string coordinator_incarnation_id = 4;
+  ModelReference selected_model = 5;
 
-  reserved 5 to 9;
+  reserved 6 to 9;
 }
 
 // CancelAttemptCommand asks the active worker attempt to stop cooperatively.

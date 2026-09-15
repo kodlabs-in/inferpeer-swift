@@ -21,8 +21,38 @@ public protocol InferPeerCallerOutbox: Sendable {
     /// Persists one immutable submission idempotently.
     func enqueue(_ submission: RequestSubmission) async throws -> OutboxEnqueueResult
 
+    /// Returns a bounded deterministic batch for recovery after joining or restarting.
+    func pending(callerID: PeerID, limit: Int) async throws -> [StoredOutboxRequest]
+
     /// Removes a request only after acceptance or local pre-submit cancellation.
     func remove(requestID: RequestID, callerID: PeerID) async throws
+
+    /// Loads the caller's durable receive and acknowledgement cursors.
+    func replayState(requestID: RequestID, callerID: PeerID) async throws -> CallerReplayState?
+
+    /// Monotonically records an event before it is exposed to the host.
+    func recordReceived(
+        requestID: RequestID,
+        callerID: PeerID,
+        cursor: UInt64
+    ) async throws
+
+    /// Monotonically records the host-confirmed durable replay position.
+    func recordAcknowledged(
+        requestID: RequestID,
+        callerID: PeerID,
+        cursor: UInt64
+    ) async throws
+}
+
+public extension InferPeerCallerOutbox {
+    func replayState(requestID: RequestID, callerID: PeerID) throws -> CallerReplayState? {
+        nil
+    }
+
+    func recordReceived(requestID: RequestID, callerID: PeerID, cursor: UInt64) throws {}
+
+    func recordAcknowledged(requestID: RequestID, callerID: PeerID, cursor: UInt64) throws {}
 }
 
 extension SQLiteOutboxStore: InferPeerCallerOutbox {}
@@ -58,6 +88,9 @@ public struct BonjourCoordinatorAdvertisement: InferPeerAdvertisement {
 
 /// Optional adapters that are only needed by worker or coordinator hosts.
 public struct InferPeerOptionalServices: Sendable {
+    /// Durable coordinator orchestration engine.
+    public let coordinator: (any CoordinatorServing)?
+
     /// Durable verified-model registry.
     public let modelRegistry: (any InferPeerModelRegistry)?
 
@@ -72,11 +105,13 @@ public struct InferPeerOptionalServices: Sendable {
 
     /// Creates optional facade services.
     public init(
+        coordinator: (any CoordinatorServing)? = nil,
         modelRegistry: (any InferPeerModelRegistry)? = nil,
         callerOutbox: (any InferPeerCallerOutbox)? = nil,
         inferenceBackend: (any InferenceBackend)? = nil,
         advertisement: (any InferPeerAdvertisement)? = nil
     ) {
+        self.coordinator = coordinator
         self.modelRegistry = modelRegistry
         self.callerOutbox = callerOutbox
         self.inferenceBackend = inferenceBackend

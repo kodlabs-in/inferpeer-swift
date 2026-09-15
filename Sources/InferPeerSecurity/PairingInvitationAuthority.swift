@@ -46,18 +46,17 @@ public actor PairingInvitationAuthority {
 
     /// Verifies and removes an invitation so no later session can replay it.
     public func consume(_ invitation: PairingInvitation) throws {
-        let storageKey = SecuritySecretKey.invitation(invitation.invitationID.rawValue)
-        guard let data = try secretStore.data(forKey: storageKey) else {
-            throw InferPeerSecurityError.invitationUnknownOrConsumed
-        }
-        let record = try decodeRecord(data)
-        guard dateProvider.now() < record.expiresAt else {
-            try secretStore.removeData(forKey: storageKey)
-            throw InferPeerSecurityError.invitationExpired
-        }
+        let stored = try activeRecord(for: invitation.invitationID)
         let claims = try PairingInvitationCodec.encodeClaims(invitation)
-        try validate(invitation, claims: claims, record: record)
-        try secretStore.removeData(forKey: storageKey)
+        try validate(invitation.proof, claims: claims, record: stored.record)
+        try consume(stored)
+    }
+
+    /// Consumes the proof received by the coordinator during an authenticated session handshake.
+    public func consume(invitationID: InvitationID, proof: Data) throws {
+        let stored = try activeRecord(for: invitationID)
+        try validate(proof, claims: stored.record.claims, record: stored.record)
+        try consume(stored)
     }
 
     /// Replaces the authority key, invalidating every outstanding proof.
@@ -100,6 +99,7 @@ public actor PairingInvitationAuthority {
         let record = IssuedInvitationRecord(
             version: IssuedInvitationRecord.currentVersion,
             claimsDigest: Data(SHA256.hash(data: claims)),
+            claims: claims,
             expiresAt: invitation.expiresAt
         )
         let data = try PairingInvitationCodec.encoder().encode(record)
@@ -116,7 +116,9 @@ public actor PairingInvitationAuthority {
                 from: data
             )
             guard record.version == IssuedInvitationRecord.currentVersion,
-                record.claimsDigest.count == SHA256.Digest.byteCount
+                record.claimsDigest.count == SHA256.Digest.byteCount,
+                !record.claims.isEmpty,
+                Data(SHA256.hash(data: record.claims)) == record.claimsDigest
             else {
                 throw InferPeerSecurityError.corruptPairingState
             }
@@ -128,8 +130,34 @@ public actor PairingInvitationAuthority {
         }
     }
 
+    private func activeRecord(
+        for invitationID: InvitationID
+    ) throws -> StoredInvitation {
+        let storageKey = SecuritySecretKey.invitation(invitationID.rawValue)
+        guard let data = try secretStore.data(forKey: storageKey) else {
+            throw InferPeerSecurityError.invitationUnknownOrConsumed
+        }
+        let record = try decodeRecord(data)
+        guard dateProvider.now() < record.expiresAt else {
+            try secretStore.removeData(forKey: storageKey)
+            throw InferPeerSecurityError.invitationExpired
+        }
+        return StoredInvitation(storageKey: storageKey, data: data, record: record)
+    }
+
+    private func consume(_ stored: StoredInvitation) throws {
+        guard
+            try secretStore.removeData(
+                forKey: stored.storageKey,
+                ifEqualTo: stored.data
+            )
+        else {
+            throw InferPeerSecurityError.invitationUnknownOrConsumed
+        }
+    }
+
     private func validate(
-        _ invitation: PairingInvitation,
+        _ proof: Data,
         claims: Data,
         record: IssuedInvitationRecord
     ) throws {
@@ -139,7 +167,7 @@ public actor PairingInvitationAuthority {
         let key = SymmetricKey(data: try authorityKey())
         guard
             HMAC<SHA256>.isValidAuthenticationCode(
-                invitation.proof,
+                proof,
                 authenticating: claims,
                 using: key
             )
@@ -149,10 +177,17 @@ public actor PairingInvitationAuthority {
     }
 }
 
+private struct StoredInvitation: Sendable {
+    let storageKey: String
+    let data: Data
+    let record: IssuedInvitationRecord
+}
+
 private struct IssuedInvitationRecord: Codable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     let version: Int
     let claimsDigest: Data
+    let claims: Data
     let expiresAt: Date
 }

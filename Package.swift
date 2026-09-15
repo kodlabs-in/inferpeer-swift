@@ -1,4 +1,4 @@
-// swift-tools-version: 6.1
+// swift-tools-version: 6.3
 
 import PackageDescription
 
@@ -68,6 +68,10 @@ let package = Package(
         .package(
             url: "https://github.com/huggingface/swift-transformers.git",
             .upToNextMinor(from: "1.3.3")
+        ),
+        .package(
+            url: "https://github.com/swiftlang/swift-docc-plugin",
+            .upToNextMajor(from: "1.5.0")
         ),
     ],
     targets: [
@@ -184,6 +188,15 @@ let package = Package(
             dependencies: ["InferPeerCore", "InferPeerInference", "InferPeerProtocol"]
         ),
         .testTarget(
+            name: "InferPeerCoordinatorTests",
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
+                "InferPeerStorage",
+            ]
+        ),
+        .testTarget(
             name: "InferPeerStorageTests",
             dependencies: [
                 "InferPeerStorage",
@@ -209,6 +222,7 @@ let package = Package(
                 "InferPeerProtocol",
                 "InferPeerSecurity",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
+                .product(name: "X509", package: "swift-certificates"),
             ]
         ),
         .testTarget(
@@ -228,6 +242,7 @@ let package = Package(
             dependencies: [
                 "InferPeer",
                 "InferPeerCore",
+                "InferPeerGRPC",
                 "InferPeerInference",
                 "InferPeerProtocol",
                 "InferPeerStorage",

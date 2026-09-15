@@ -34,6 +34,8 @@ actor FakeTransport: PeerTransport {
     private(set) var listenEndpoints: [PeerEndpoint] = []
     private(set) var callerEndpoints: [PeerEndpoint] = []
     private(set) var workerEndpoints: [PeerEndpoint] = []
+    private(set) var callerInvitationIDs: [InvitationID] = []
+    private(set) var workerInvitationIDs: [InvitationID] = []
     private(set) var stopCount = 0
 
     func listen(at endpoint: PeerEndpoint) -> any CoordinatorTransportListener {
@@ -51,8 +53,125 @@ actor FakeTransport: PeerTransport {
         return FakeWorkerSession()
     }
 
+    func connectCaller(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) -> any CallerTransportSession {
+        callerInvitationIDs.append(invitation.invitationID)
+        return connectCaller(to: endpoint)
+    }
+
+    func connectWorker(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) -> any WorkerTransportSession {
+        workerInvitationIDs.append(invitation.invitationID)
+        return connectWorker(to: endpoint)
+    }
+
     func stop() {
         stopCount += 1
+    }
+}
+
+actor SuspendedListenTransport: PeerTransport {
+    private var listenStartedContinuation: CheckedContinuation<Void, Never>?
+    private var listenResumeContinuation: CheckedContinuation<Void, Never>?
+    private(set) var listenCount = 0
+    private(set) var stopCount = 0
+
+    func listen(at endpoint: PeerEndpoint) async -> any CoordinatorTransportListener {
+        listenCount += 1
+        listenStartedContinuation?.resume()
+        listenStartedContinuation = nil
+        await withCheckedContinuation { continuation in
+            listenResumeContinuation = continuation
+        }
+        return FakeListener()
+    }
+
+    func waitUntilListenStarts() async {
+        guard listenCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            listenStartedContinuation = continuation
+        }
+    }
+
+    func resumeListen() {
+        listenResumeContinuation?.resume()
+        listenResumeContinuation = nil
+    }
+
+    func connectCaller(to endpoint: PeerEndpoint) -> any CallerTransportSession {
+        FakeCallerSession()
+    }
+
+    func connectWorker(to endpoint: PeerEndpoint) -> any WorkerTransportSession {
+        FakeWorkerSession()
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+}
+
+actor SuspendedJoinTransport: PeerTransport {
+    nonisolated let callerSession = CloseTrackingCallerSession()
+    private var joinStartedContinuation: CheckedContinuation<Void, Never>?
+    private var joinResumeContinuation: CheckedContinuation<Void, Never>?
+    private(set) var joinCount = 0
+
+    func listen(at endpoint: PeerEndpoint) -> any CoordinatorTransportListener {
+        FakeListener()
+    }
+
+    func connectCaller(to endpoint: PeerEndpoint) -> any CallerTransportSession {
+        callerSession
+    }
+
+    func connectCaller(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) async -> any CallerTransportSession {
+        joinCount += 1
+        joinStartedContinuation?.resume()
+        joinStartedContinuation = nil
+        await withCheckedContinuation { continuation in
+            joinResumeContinuation = continuation
+        }
+        return callerSession
+    }
+
+    func waitUntilJoinStarts() async {
+        guard joinCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            joinStartedContinuation = continuation
+        }
+    }
+
+    func resumeJoin() {
+        joinResumeContinuation?.resume()
+        joinResumeContinuation = nil
+    }
+
+    func connectWorker(to endpoint: PeerEndpoint) -> any WorkerTransportSession {
+        FakeWorkerSession()
+    }
+
+    func stop() {}
+}
+
+actor CloseTrackingCallerSession: CallerTransportSession {
+    private(set) var closeCount = 0
+
+    func send(_ request: InferPeer_V1_ClientSessionRequest) {}
+
+    nonisolated func responses(bufferingLimit: Int) -> CallerResponseStream {
+        CallerResponseStream { $0.finish() }
+    }
+
+    func close() {
+        closeCount += 1
     }
 }
 
@@ -161,6 +280,24 @@ actor FakeAdvertisement: InferPeerAdvertisement {
     }
 }
 
+actor FakeCoordinatorService: CoordinatorServing {
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var revokedPeerIDs: [PeerID] = []
+
+    func start(listener: any CoordinatorTransportListener) {
+        startCount += 1
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func revoke(peerID: PeerID) {
+        revokedPeerIDs.append(peerID)
+    }
+}
+
 actor FakeModelRegistry: InferPeerModelRegistry {
     let artifact: LocalModelArtifact
     private(set) var registrationCount = 0
@@ -209,13 +346,46 @@ actor FakeInferenceBackend: InferenceBackend {
 actor FakeCallerOutbox: InferPeerCallerOutbox {
     private(set) var enqueuedRequestIDs: [RequestID] = []
     private(set) var removedRequestIDs: [RequestID] = []
+    private var pendingRequests: [StoredOutboxRequest]
+    private var replayStates: [RequestID: CallerReplayState] = [:]
+
+    init(pendingRequests: [StoredOutboxRequest] = []) {
+        self.pendingRequests = pendingRequests
+    }
 
     func enqueue(_ submission: RequestSubmission) -> OutboxEnqueueResult {
         enqueuedRequestIDs.append(submission.requestID)
-        return .enqueued(StoredOutboxRequest(submission: submission, enqueuedAt: Date()))
+        let stored = StoredOutboxRequest(submission: submission, enqueuedAt: Date())
+        pendingRequests.append(stored)
+        return .enqueued(stored)
+    }
+
+    func pending(callerID: PeerID, limit: Int) -> [StoredOutboxRequest] {
+        Array(pendingRequests.filter { $0.submission.callerID == callerID }.prefix(limit))
     }
 
     func remove(requestID: RequestID, callerID: PeerID) {
         removedRequestIDs.append(requestID)
+        pendingRequests.removeAll { $0.submission.requestID == requestID }
+    }
+
+    func replayState(requestID: RequestID, callerID: PeerID) -> CallerReplayState? {
+        replayStates[requestID]
+    }
+
+    func recordReceived(requestID: RequestID, callerID: PeerID, cursor: UInt64) {
+        let previous = replayStates[requestID]
+        replayStates[requestID] = CallerReplayState(
+            latestCursor: max(previous?.latestCursor ?? 0, cursor),
+            acknowledgedCursor: previous?.acknowledgedCursor
+        )
+    }
+
+    func recordAcknowledged(requestID: RequestID, callerID: PeerID, cursor: UInt64) {
+        let previous = replayStates[requestID]
+        replayStates[requestID] = CallerReplayState(
+            latestCursor: max(previous?.latestCursor ?? 0, cursor),
+            acknowledgedCursor: max(previous?.acknowledgedCursor ?? 0, cursor)
+        )
     }
 }

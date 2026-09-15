@@ -1,3 +1,4 @@
+import Foundation
 import InferPeerCore
 import InferPeerInference
 import InferPeerProtocol
@@ -14,13 +15,22 @@ public struct InferPeerJoinedSessions: Sendable {
 
 /// Thin, dependency-injected lifecycle facade over InferPeer's focused modules.
 public actor InferPeerNode {
-    private let configuration: InferPeerNodeConfiguration
-    private let dependencies: InferPeerDependencies
-    private var nodeState = InferPeerNodeState.stopped
+    private enum StartOperation: Equatable {
+        case active(UUID)
+        case cancelled(UUID)
+    }
+
+    let configuration: InferPeerNodeConfiguration
+    let dependencies: InferPeerDependencies
+    var nodeState = InferPeerNodeState.stopped
     private var listener: (any CoordinatorTransportListener)?
-    private var joinedSessions: InferPeerJoinedSessions?
-    private var callerRequests: CallerRequestService?
-    private var loadedModel: ModelReference?
+    var joinedSessions: InferPeerJoinedSessions?
+    var callerRequests: CallerRequestService?
+    var workerService: WorkerSessionService?
+    var loadedModel: ModelReference?
+    private var startOperation: StartOperation?
+    var joinOperationID: UUID?
+    private var isStopping = false
 
     /// Creates a stopped node without opening sockets or loading models.
     public init(
@@ -38,36 +48,63 @@ public actor InferPeerNode {
 
     /// Starts configured coordinator resources; caller and worker connections remain explicit.
     public func start() async throws {
-        guard nodeState == .stopped else { throw InferPeerNodeError.alreadyStarted }
-        if configuration.roles.contains(.coordinator) {
-            try await startCoordinator()
+        guard nodeState == .stopped, startOperation == nil, !isStopping else {
+            throw InferPeerNodeError.alreadyStarted
         }
-        nodeState = .started
+        let operationID = UUID()
+        startOperation = .active(operationID)
+        var startedListener: (any CoordinatorTransportListener)?
+        do {
+            if configuration.roles.contains(.coordinator) {
+                startedListener = try await makeCoordinatorListener()
+            }
+            guard startOperation == .active(operationID) else {
+                throw CancellationError()
+            }
+            listener = startedListener
+            nodeState = .started
+            startOperation = nil
+        } catch {
+            await cleanUpAbandonedStart(listener: startedListener)
+            if startOperation == .active(operationID)
+                || startOperation == .cancelled(operationID)
+            {
+                startOperation = nil
+            }
+            throw error
+        }
     }
 
     /// Stops every network resource owned by the facade and unloads its tracked model.
     public func stop() async {
-        guard nodeState == .started else { return }
+        guard !isStopping else { return }
+        if case .active(let operationID) = startOperation {
+            startOperation = .cancelled(operationID)
+        } else if nodeState == .stopped {
+            return
+        }
+        isStopping = true
+        joinOperationID = nil
         nodeState = .stopped
-        await dependencies.optional.advertisement?.stop()
-        await callerRequests?.stop()
-        callerRequests = nil
-        await joinedSessions?.caller?.close()
-        await joinedSessions?.worker?.close()
+        let callerRequests = callerRequests
+        let workerService = workerService
+        let sessions = joinedSessions
+        let listener = listener
+        self.callerRequests = nil
+        self.workerService = nil
         joinedSessions = nil
+        self.listener = nil
+        await dependencies.optional.advertisement?.stop()
+        await dependencies.optional.coordinator?.stop()
+        await callerRequests?.stop()
+        await workerService?.stop()
+        await sessions?.caller?.close()
+        await sessions?.worker?.close()
         await listener?.close()
-        listener = nil
         await unloadTrackedModel()
         await dependencies.discovery.stop()
         await dependencies.transport.stop()
-    }
-
-    /// Returns authenticated inbound coordinator sessions without consuming them.
-    public func inboundSessions() throws -> InboundPeerSessionStream {
-        try requireStarted()
-        try requireRole(.coordinator)
-        guard let listener else { throw InferPeerNodeError.notStarted }
-        return listener.sessions(bufferingLimit: configuration.streamBufferingLimit)
+        isStopping = false
     }
 
     /// Starts bounded discovery for untrusted coordinator candidates.
@@ -86,30 +123,57 @@ public actor InferPeerNode {
         return try await dependencies.discovery.candidate(for: endpoint)
     }
 
-    /// Consumes a pairing invitation and opens every explicitly enabled joining role.
+    /// Sends a pairing invitation and opens every explicitly enabled joining role.
     public func join(_ invitation: PairingInvitation) async throws -> InferPeerJoinedSessions {
         try requireStarted()
         try requireJoiningRole()
-        guard joinedSessions == nil else { throw InferPeerNodeError.alreadyJoined }
-        try await dependencies.identity.consume(invitation)
-
+        guard joinedSessions == nil, joinOperationID == nil else {
+            throw InferPeerNodeError.alreadyJoined
+        }
+        let operationID = UUID()
+        joinOperationID = operationID
         let endpoint = invitation.coordinator.endpoint
-        let caller = try await connectCaller(to: endpoint)
-        var worker: (any WorkerTransportSession)?
+        var resources = PendingJoinResources()
         do {
-            worker = try await connectWorker(to: endpoint)
-            callerRequests = try await makeCallerRequestService(
-                session: caller,
+            resources.caller = try await connectCaller(to: endpoint, invitation: invitation)
+            try requireActiveJoin(operationID)
+            resources.worker = try await connectWorker(to: endpoint, invitation: invitation)
+            try requireActiveJoin(operationID)
+            resources.callerRequests = try await makeCallerRequestService(
+                session: resources.caller,
                 clusterID: invitation.coordinator.clusterID
             )
-            let sessions = InferPeerJoinedSessions(caller: caller, worker: worker)
-            joinedSessions = sessions
+            try requireActiveJoin(operationID)
+            resources.workerService = try await makeWorkerService(
+                session: resources.worker,
+                clusterID: invitation.coordinator.clusterID
+            )
+            try requireActiveJoin(operationID)
+            let sessions = installJoinedSessions(resources)
+            joinOperationID = nil
             return sessions
         } catch {
-            await caller?.close()
-            await worker?.close()
+            await cleanUpFailedJoin(resources)
+            if joinOperationID == operationID {
+                joinOperationID = nil
+            }
             throw error
         }
+    }
+
+    /// Closes joined caller and worker roles while leaving this node started for a clean rejoin.
+    public func leaveCoordinator() async {
+        joinOperationID = nil
+        let callerRequests = callerRequests
+        let workerService = workerService
+        let sessions = joinedSessions
+        self.callerRequests = nil
+        self.workerService = nil
+        joinedSessions = nil
+        await callerRequests?.stop()
+        await workerService?.stop()
+        await sessions?.caller?.close()
+        await sessions?.worker?.close()
     }
 
     /// Durably stores and sends one caller request under a stable identifier.
@@ -144,6 +208,7 @@ public actor InferPeerNode {
     /// Durably requests cancellation or confirms an unsent local cancellation.
     @discardableResult
     public func cancel(requestID: RequestID) async throws -> CancellationState {
+        try requireStarted()
         try requireRole(.caller)
         let callerRequests = try requireCallerRequests()
         return try await callerRequests.cancel(requestID: requestID)
@@ -153,6 +218,7 @@ public actor InferPeerNode {
     public func requestStatus(_ requestID: RequestID) async throws
         -> InferPeerCallerRequestStatus
     {
+        try requireStarted()
         try requireRole(.caller)
         let callerRequests = try requireCallerRequests()
         return try await callerRequests.status(requestID: requestID)
@@ -167,6 +233,14 @@ public actor InferPeerNode {
     public func setParticipation(_ participation: WorkerParticipationState) async throws {
         try requireRole(.worker)
         await dependencies.status.setParticipation(participation)
+        try await workerService?.refreshStatus()
+    }
+
+    /// Samples and publishes worker state after a host lifecycle or platform-state change.
+    public func refreshWorkerStatus() async throws {
+        try requireRole(.worker)
+        await dependencies.status.refresh()
+        try await workerService?.refreshStatus()
     }
 
     /// Persists a verified local model registration idempotently.
@@ -213,103 +287,11 @@ public actor InferPeerNode {
     /// Revokes a peer's future access using the injected identity provider.
     public func forgetPeer(_ peerID: PeerID) async throws {
         try await dependencies.identity.revoke(peerID: peerID)
+        await dependencies.optional.coordinator?.revoke(peerID: peerID)
     }
 
     /// Returns the certificate-bound local identity.
     public func localIdentity() async throws -> LocalPeerIdentity {
         try await dependencies.identity.localIdentity()
-    }
-
-    private func startCoordinator() async throws {
-        guard let endpoint = configuration.coordinatorEndpoint else {
-            throw InferPeerNodeError.coordinatorEndpointRequired
-        }
-        let listener = try await dependencies.transport.listen(at: endpoint)
-        do {
-            try await dependencies.optional.advertisement?.start()
-            self.listener = listener
-        } catch {
-            await listener.close()
-            throw error
-        }
-    }
-
-    private func connectCaller(to endpoint: PeerEndpoint) async throws
-        -> (any CallerTransportSession)?
-    {
-        guard configuration.roles.contains(.caller) else { return nil }
-        return try await dependencies.transport.connectCaller(to: endpoint)
-    }
-
-    private func connectWorker(to endpoint: PeerEndpoint) async throws
-        -> (any WorkerTransportSession)?
-    {
-        guard configuration.roles.contains(.worker) else { return nil }
-        return try await dependencies.transport.connectWorker(to: endpoint)
-    }
-
-    private func makeCallerRequestService(
-        session: (any CallerTransportSession)?,
-        clusterID: ClusterID
-    ) async throws -> CallerRequestService? {
-        guard let session else { return nil }
-        guard let outbox = dependencies.optional.callerOutbox else { return nil }
-        let identity = try await dependencies.identity.localIdentity()
-        let service = CallerRequestService(
-            session: session,
-            outbox: outbox,
-            clusterID: clusterID,
-            callerID: identity.peerID,
-            bufferingLimit: configuration.streamBufferingLimit
-        )
-        await service.start()
-        return service
-    }
-
-    private func modelServices() throws -> (
-        registry: any InferPeerModelRegistry,
-        backend: any InferenceBackend
-    ) {
-        guard let registry = dependencies.optional.modelRegistry else {
-            throw InferPeerNodeError.modelRegistryUnavailable
-        }
-        guard let backend = dependencies.optional.inferenceBackend else {
-            throw InferPeerNodeError.inferenceBackendUnavailable
-        }
-        return (registry, backend)
-    }
-
-    private func unloadTrackedModel() async {
-        guard let loadedModel, let backend = dependencies.optional.inferenceBackend else { return }
-        do {
-            try await backend.unloadModel(loadedModel)
-        } catch {
-            // Stop remains best-effort so all network resources are still released.
-        }
-        self.loadedModel = nil
-    }
-
-    private func requireStarted() throws {
-        guard nodeState == .started else { throw InferPeerNodeError.notStarted }
-    }
-
-    private func requireRole(_ role: NodeRole) throws {
-        guard configuration.roles.contains(role) else {
-            throw InferPeerNodeError.roleNotEnabled(role)
-        }
-    }
-
-    private func requireJoiningRole() throws {
-        guard configuration.roles.contains(.caller) || configuration.roles.contains(.worker) else {
-            throw InferPeerNodeError.roleNotEnabled(.caller)
-        }
-    }
-
-    private func requireCallerRequests() throws -> CallerRequestService {
-        guard joinedSessions?.caller != nil else {
-            throw InferPeerNodeError.callerSessionUnavailable
-        }
-        guard let callerRequests else { throw InferPeerNodeError.callerOutboxUnavailable }
-        return callerRequests
     }
 }

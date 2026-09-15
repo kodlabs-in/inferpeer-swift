@@ -23,6 +23,59 @@ struct PairingInvitationAuthorityTests {
         }
     }
 
+    @Test("Shared authorities atomically consume one invitation")
+    func consumesInvitationAcrossAuthoritiesOnce() async throws {
+        let store = MemorySecretStore()
+        let firstAuthority = PairingInvitationAuthority(secretStore: store)
+        let secondAuthority = PairingInvitationAuthority(secretStore: store)
+        let invitation = try await firstAuthority.issue(for: makePairingCoordinator())
+
+        let outcomes = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+            group.addTask { (try? await firstAuthority.consume(invitation)) != nil }
+            group.addTask { (try? await secondAuthority.consume(invitation)) != nil }
+            return await group.reduce(into: []) { $0.append($1) }
+        }
+
+        #expect(outcomes.filter { $0 }.count == 1)
+        #expect(outcomes.filter { !$0 }.count == 1)
+    }
+
+    @Test("Coordinator consumes handshake credentials without receiving private claims")
+    func consumesHandshakeCredentials() async throws {
+        let authority = PairingInvitationAuthority(secretStore: MemorySecretStore())
+        let invitation = try await authority.issue(for: makePairingCoordinator())
+
+        try await authority.consume(
+            invitationID: invitation.invitationID,
+            proof: invitation.proof
+        )
+
+        await #expect(throws: InferPeerSecurityError.invitationUnknownOrConsumed) {
+            try await authority.consume(
+                invitationID: invitation.invitationID,
+                proof: invitation.proof
+            )
+        }
+    }
+
+    @Test("Invalid handshake proof does not consume the invitation")
+    func rejectsInvalidHandshakeProof() async throws {
+        let authority = PairingInvitationAuthority(secretStore: MemorySecretStore())
+        let invitation = try await authority.issue(for: makePairingCoordinator())
+        let invalidProof = Data(repeating: 0xFF, count: invitation.proof.count)
+
+        await #expect(throws: InferPeerSecurityError.invalidInvitationProof) {
+            try await authority.consume(
+                invitationID: invitation.invitationID,
+                proof: invalidProof
+            )
+        }
+        try await authority.consume(
+            invitationID: invitation.invitationID,
+            proof: invitation.proof
+        )
+    }
+
     @Test("Rejects a tampered proof without consuming the valid invitation")
     func rejectsTamperedProof() async throws {
         let authority = PairingInvitationAuthority(secretStore: MemorySecretStore())

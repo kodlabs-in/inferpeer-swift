@@ -70,4 +70,44 @@ struct SQLiteOutboxStoreTests {
 
         #expect(try await store.pending(callerID: submission.callerID, limit: 10).isEmpty)
     }
+
+    @Test("Persists monotonic replay cursors across reopen")
+    func persistsReplayState() async throws {
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        let submission = try makeSubmission()
+        let store = try testDatabase.makeOutboxStore()
+        try await store.recordReceived(
+            requestID: submission.requestID,
+            callerID: submission.callerID,
+            cursor: 3
+        )
+        try await store.recordReceived(
+            requestID: submission.requestID,
+            callerID: submission.callerID,
+            cursor: 2
+        )
+        try await store.recordAcknowledged(
+            requestID: submission.requestID,
+            callerID: submission.callerID,
+            cursor: 2
+        )
+        try store.close()
+        let reopened = try testDatabase.makeOutboxStore()
+        defer { try? reopened.close() }
+
+        let state = try await reopened.replayState(
+            requestID: submission.requestID,
+            callerID: submission.callerID
+        )
+
+        #expect(state == CallerReplayState(latestCursor: 3, acknowledgedCursor: 2))
+        await #expect(throws: SQLiteStorageError.cursorOutOfRange) {
+            try await reopened.recordAcknowledged(
+                requestID: submission.requestID,
+                callerID: submission.callerID,
+                cursor: 4
+            )
+        }
+    }
 }

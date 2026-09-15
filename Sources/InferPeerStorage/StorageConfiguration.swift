@@ -7,6 +7,9 @@ public struct SQLiteStorageConfiguration: Equatable, Sendable {
         validatedMaximumDatabaseBytes: 256 * 1_024 * 1_024,
         maximumReplayPageSize: 1_000,
         maximumOutboxBatchSize: 100,
+        maximumPendingRequests: 100,
+        maximumPendingRequestsPerCaller: 10,
+        terminalRetention: 24 * 60 * 60,
         busyTimeout: 5,
         maximumReaderCount: 5
     )
@@ -20,6 +23,15 @@ public struct SQLiteStorageConfiguration: Equatable, Sendable {
     /// Maximum number of pending outbox requests returned by one query.
     public let maximumOutboxBatchSize: Int
 
+    /// Maximum nonterminal requests retained cluster-wide.
+    public let maximumPendingRequests: Int
+
+    /// Maximum nonterminal requests owned by one caller.
+    public let maximumPendingRequestsPerCaller: Int
+
+    /// Duration for which terminal request data remains replayable.
+    public let terminalRetention: TimeInterval
+
     /// Time SQLite waits for a transient lock before failing.
     public let busyTimeout: TimeInterval
 
@@ -31,6 +43,9 @@ public struct SQLiteStorageConfiguration: Equatable, Sendable {
         maximumDatabaseBytes: UInt64,
         maximumReplayPageSize: Int,
         maximumOutboxBatchSize: Int = 100,
+        maximumPendingRequests: Int = 100,
+        maximumPendingRequestsPerCaller: Int = 10,
+        terminalRetention: TimeInterval = 24 * 60 * 60,
         busyTimeout: TimeInterval,
         maximumReaderCount: Int
     ) throws {
@@ -39,17 +54,24 @@ public struct SQLiteStorageConfiguration: Equatable, Sendable {
         }
         guard maximumReplayPageSize > 0,
             maximumOutboxBatchSize > 0,
+            maximumPendingRequests > 0,
+            maximumPendingRequestsPerCaller > 0,
             maximumReaderCount > 0
         else {
             throw SQLiteStorageError.invalidConfiguration
         }
-        guard busyTimeout.isFinite, busyTimeout >= 0 else {
+        guard busyTimeout.isFinite, busyTimeout >= 0,
+            terminalRetention.isFinite, terminalRetention > 0
+        else {
             throw SQLiteStorageError.invalidConfiguration
         }
         self.init(
             validatedMaximumDatabaseBytes: maximumDatabaseBytes,
             maximumReplayPageSize: maximumReplayPageSize,
             maximumOutboxBatchSize: maximumOutboxBatchSize,
+            maximumPendingRequests: maximumPendingRequests,
+            maximumPendingRequestsPerCaller: maximumPendingRequestsPerCaller,
+            terminalRetention: terminalRetention,
             busyTimeout: busyTimeout,
             maximumReaderCount: maximumReaderCount
         )
@@ -59,12 +81,18 @@ public struct SQLiteStorageConfiguration: Equatable, Sendable {
         validatedMaximumDatabaseBytes: UInt64,
         maximumReplayPageSize: Int,
         maximumOutboxBatchSize: Int,
+        maximumPendingRequests: Int,
+        maximumPendingRequestsPerCaller: Int,
+        terminalRetention: TimeInterval,
         busyTimeout: TimeInterval,
         maximumReaderCount: Int
     ) {
         maximumDatabaseBytes = validatedMaximumDatabaseBytes
         self.maximumReplayPageSize = maximumReplayPageSize
         self.maximumOutboxBatchSize = maximumOutboxBatchSize
+        self.maximumPendingRequests = maximumPendingRequests
+        self.maximumPendingRequestsPerCaller = maximumPendingRequestsPerCaller
+        self.terminalRetention = terminalRetention
         self.busyTimeout = busyTimeout
         self.maximumReaderCount = maximumReaderCount
     }

@@ -105,6 +105,31 @@ struct SQLiteJobStoreTests {
         try assertAcknowledgementPersisted(in: testDatabase.databaseURL)
     }
 
+    @Test("Concurrent lifecycle commits preserve one atomic winner")
+    func serializesConcurrentLifecycleCommits() async throws {
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        let store = try testDatabase.makeStore()
+        defer { try? store.close() }
+        let submission = try makeSubmission()
+        let accepted = try acceptedRequest(from: await store.accept(submission))
+        let running = try makeRunningMutation(from: accepted)
+        let cancelled = makeQueuedCancellationMutation(from: accepted)
+
+        async let runningOutcome = commitOutcome(running, to: store)
+        async let cancellationOutcome = commitOutcome(cancelled, to: store)
+        let outcomes = await [runningOutcome, cancellationOutcome]
+        let restored = try await store.request(
+            requestID: submission.requestID,
+            callerID: submission.callerID
+        )
+
+        #expect(outcomes.filter(\.succeeded).count == 1)
+        #expect(outcomes.filter(\.lostRevisionRace).count == 1)
+        #expect(restored?.revision == 1)
+        #expect(restored?.lifecycle.state == .running || restored?.lifecycle.state == .cancelled)
+    }
+
     @Test("Rejects malformed persisted lifecycle state")
     func rejectsCorruptLifecycle() async throws {
         let testDatabase = try StorageTestDatabase()
@@ -153,7 +178,7 @@ struct SQLiteJobStoreTests {
                 callerID: submission.callerID
             ) == nil
         )
-        await #expect(throws: RequestPersistenceError.replayExpired) {
+        await #expect(throws: RequestPersistenceError.self) {
             try await store.replay(
                 requestID: submission.requestID,
                 callerID: submission.callerID,
@@ -161,8 +186,37 @@ struct SQLiteJobStoreTests {
                 limit: 10
             )
         }
-        await #expect(throws: RequestPersistenceError.replayExpired) {
+        await #expect(throws: RequestPersistenceError.self) {
             try await store.accept(submission)
+        }
+    }
+}
+
+extension SQLiteJobStoreTests {
+    @Test("An expired replay retains its successful terminal result")
+    func retainsTerminalResultAfterPruning() async throws {
+        let timestamp = Date(timeIntervalSince1970: 1_000)
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        let store = try testDatabase.makeStore(date: timestamp)
+        defer { try? store.close() }
+        let submission = try makeSubmission()
+        let accepted = try acceptedRequest(from: await store.accept(submission))
+        let completion = try makeStoredCompletion(from: accepted)
+        _ = try await store.commit(completion.mutation)
+        try await store.pruneTerminalRequests(before: timestamp.addingTimeInterval(1))
+
+        do {
+            _ = try await store.replay(
+                requestID: submission.requestID,
+                callerID: submission.callerID,
+                after: nil,
+                limit: 10
+            )
+            Issue.record("Expected replay expiry")
+        } catch RequestPersistenceError.replayExpired(let retained) {
+            #expect(retained?.attemptID == completion.attemptID)
+            #expect(retained?.result == completion.result)
         }
     }
 
@@ -198,101 +252,66 @@ struct SQLiteJobStoreTests {
             )
         }
     }
-}
 
-private extension SQLiteJobStoreTests {
-    private func makeRunningMutation(
-        from accepted: StoredRequest
-    ) throws -> RequestMutation {
-        var lifecycle = accepted.lifecycle
-        let attemptID = try #require(AttemptID(rawValue: "attempt-1"))
-        let workerID = try #require(PeerID(rawValue: "worker-1"))
-        let coordinatorID = try #require(
-            CoordinatorIncarnationID(rawValue: "coordinator-1")
+    @Test("Enforces pending queue limits without rejecting duplicates")
+    func enforcesPendingQueueLimits() async throws {
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        let configuration = try SQLiteStorageConfiguration(
+            maximumDatabaseBytes: 256 * 1_024 * 1_024,
+            maximumReplayPageSize: 10,
+            maximumPendingRequests: 1,
+            maximumPendingRequestsPerCaller: 1,
+            busyTimeout: 1,
+            maximumReaderCount: 1
         )
-        _ = try lifecycle.assign(
-            attemptID: attemptID,
-            workerID: workerID,
-            coordinatorIncarnationID: coordinatorID,
-            leaseDeadline: MonotonicInstant(nanoseconds: 20_000_000_000)
-        )
-        try lifecycle.accept(attemptID: attemptID)
-        return RequestMutation(
-            requestID: accepted.submission.requestID,
-            callerID: accepted.submission.callerID,
-            expectedRevision: accepted.revision,
-            lifecycle: lifecycle,
-            events: [
-                PendingRequestEvent(
-                    attemptID: attemptID,
-                    payload: .stateChanged(state: .assigned, attemptNumber: 1)
-                ),
-                PendingRequestEvent(
-                    attemptID: attemptID,
-                    payload: .stateChanged(state: .running, attemptNumber: 1)
-                ),
-                PendingRequestEvent(
-                    attemptID: attemptID,
-                    payload: .generation(try .textDelta(TextDelta("Hi")))
-                ),
-            ]
-        )
-    }
+        let store = try testDatabase.makeStore(configuration: configuration)
+        defer { try? store.close() }
+        let first = try makeSubmission()
+        _ = try await store.accept(first)
 
-    private func assertReplayPayloads(_ events: [PersistedRequestEvent]) throws {
-        #expect(events.count == 4)
-        guard case .accepted(.queued) = events[0].payload,
-            case .stateChanged(.assigned, 1) = events[1].payload,
-            case .stateChanged(.running, 1) = events[2].payload,
-            case .generation(.textDelta(let delta)) = events[3].payload
-        else {
-            Issue.record("Replay payloads were not restored in committed order")
+        guard case .duplicate = try await store.accept(first) else {
+            Issue.record("Expected a duplicate while the queue is full")
             return
         }
-        #expect(delta.text == "Hi")
+        await #expect(throws: RequestPersistenceError.resourceExhausted) {
+            try await store.accept(makeSubmission(request: "request-2", revision: 2))
+        }
     }
 
-    private func assertRestoredLifecycle(
-        _ expected: RequestLifecycle,
-        submission: RequestSubmission,
-        database: StorageTestDatabase
-    ) async throws {
-        let reopenedStore = try database.makeStore()
-        let restored = try await reopenedStore.request(
-            requestID: submission.requestID,
-            callerID: submission.callerID
-        )
-        try reopenedStore.close()
-        #expect(restored?.lifecycle == expected)
+    @Test("Lists nonterminal requests deterministically for recovery")
+    func listsNonterminalRequests() async throws {
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        let store = try testDatabase.makeStore()
+        defer { try? store.close() }
+        let first = try makeSubmission()
+        let second = try makeSubmission(request: "request-2", revision: 2)
+        _ = try await store.accept(first)
+        _ = try await store.accept(second)
+
+        let recovered = try await store.nonterminalRequests(limit: 10)
+
+        #expect(recovered.map(\.submission.requestID) == [first.requestID, second.requestID])
+        #expect(recovered.allSatisfy { $0.acceptedAt.timeIntervalSince1970 > 0 })
     }
 
-    private func assertAcknowledgementPersisted(in databaseURL: URL) throws {
-        let database = try DatabaseQueue(path: databaseURL.path)
-        let acknowledgedCursor = try database.read { database in
-            try Int64.fetchOne(
-                database,
-                sql: "SELECT acknowledgedCursor FROM request WHERE requestID = ?",
-                arguments: ["request-1"]
-            )
-        }
-        let journalMode = try database.read { database in
-            try String.fetchOne(database, sql: "PRAGMA journal_mode")
-        }
-        let migrations = try database.read { database in
-            try String.fetchAll(database, sql: "SELECT identifier FROM grdb_migrations")
-        }
+    @Test("Conversation revisions advance per caller across coordinator restarts")
+    func enforcesConversationRevisions() async throws {
+        let testDatabase = try StorageTestDatabase()
+        defer { testDatabase.remove() }
+        var store = try testDatabase.makeStore()
+        _ = try await store.accept(makeSubmission(revision: 2))
+        try store.close()
+        store = try testDatabase.makeStore()
+        defer { try? store.close() }
 
-        #expect(acknowledgedCursor == 4)
-        #expect(journalMode?.lowercased() == "wal")
-        #expect(migrations == ["v1_request_store"])
-    }
-
-    private func corruptRequestState(in databaseURL: URL) throws {
-        let database = try DatabaseQueue(path: databaseURL.path)
-        try database.write { database in
-            try database.execute(
-                sql: "UPDATE request SET state = ? WHERE requestID = ?",
-                arguments: ["unknown-state", "request-1"]
+        await #expect(throws: RequestPersistenceError.conversationRevisionNotIncreasing) {
+            try await store.accept(makeSubmission(request: "request-regressed", revision: 1))
+        }
+        await #expect(throws: Never.self) {
+            try await store.accept(
+                makeSubmission(request: "request-other-caller", caller: "caller-2", revision: 1)
             )
         }
     }

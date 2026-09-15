@@ -8,6 +8,29 @@ public struct InferPeerRequestHandle: Hashable, Sendable {
     public let requestID: RequestID
 }
 
+/// A command rejected before it could durably change coordinator state.
+public struct InferPeerCommandRejection: Error, Equatable, Sendable {
+    /// Stable public reason for rejection.
+    public let error: InferPeerError
+
+    /// Attempt that produced a retained successful result, when available.
+    public let attemptID: AttemptID?
+
+    /// Compact final result retained after detailed replay expired.
+    public let retainedTerminalResult: GenerationResult?
+
+    /// Creates a typed command rejection.
+    public init(
+        error: InferPeerError,
+        attemptID: AttemptID?,
+        retainedTerminalResult: GenerationResult?
+    ) {
+        self.error = error
+        self.attemptID = attemptID
+        self.retainedTerminalResult = retainedTerminalResult
+    }
+}
+
 /// Replayable semantic payload delivered for one caller request.
 public enum InferPeerRequestEventPayload: Equatable, Sendable {
     /// The coordinator durably accepted the request.

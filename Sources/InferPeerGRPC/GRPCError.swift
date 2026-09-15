@@ -7,6 +7,7 @@ public enum InferPeerGRPCError: Error, Equatable, Sendable {
     case endpointNotAllowed
     case roleDisabled
     case coordinatorPinMissing
+    case invitationExpired
     case unauthenticated
     case permissionDenied
     case protocolMismatch

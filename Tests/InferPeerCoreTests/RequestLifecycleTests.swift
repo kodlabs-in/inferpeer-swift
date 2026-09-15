@@ -56,6 +56,25 @@ struct RequestLifecycleTests {
         }
     }
 
+    @Test("Interruption confirms an already-durable cancellation instead of retrying")
+    func interruptionConfirmsPendingCancellation() throws {
+        let attemptID = try #require(AttemptID(rawValue: "attempt-1"))
+        var lifecycle = try runningLifecycle(attemptID: attemptID)
+        #expect(lifecycle.requestCancellation() == .pending)
+
+        try lifecycle.interrupt(attemptID: attemptID, willRetry: true)
+
+        #expect(lifecycle.state == .cancelled)
+        #expect(lifecycle.cancellationState == .confirmed)
+        #expect(lifecycle.activeAttempt == nil)
+        _ = try RequestLifecycle(
+            restoring: lifecycle.state,
+            attemptNumber: lifecycle.attemptNumber,
+            activeAttempt: lifecycle.activeAttempt,
+            cancellationState: lifecycle.cancellationState
+        )
+    }
+
     @Test("Makes the first terminal cancel-or-complete commit win")
     func resolvesCancellationRace() throws {
         let attemptID = try #require(AttemptID(rawValue: "attempt-1"))

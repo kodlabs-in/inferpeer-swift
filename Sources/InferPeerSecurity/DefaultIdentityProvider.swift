@@ -1,3 +1,4 @@
+import Foundation
 import InferPeerCore
 import InferPeerProtocol
 
@@ -30,13 +31,30 @@ public actor DefaultIdentityProvider: IdentityProvider {
     public func trustDecision(
         for identity: PresentedPeerIdentity
     ) async throws -> PeerTrustDecision {
+        try await trustDecision(for: identity, requiredRole: nil)
+    }
+
+    /// Trusts an exact certificate only when its persisted membership includes the requested role.
+    public func trustDecision(
+        for identity: PresentedPeerIdentity,
+        role: NodeRole
+    ) async throws -> PeerTrustDecision {
+        try await trustDecision(for: identity, requiredRole: role)
+    }
+
+    private func trustDecision(
+        for identity: PresentedPeerIdentity,
+        requiredRole: NodeRole?
+    ) async throws -> PeerTrustDecision {
         guard let record = try await trustRepository.trustRecord(peerID: identity.peerID) else {
             return .unknown
         }
         guard record.revokedAt == nil else { return .revoked }
-        return record.identity.certificateFingerprint == identity.certificateFingerprint
-            ? .trusted
-            : .unknown
+        guard record.identity.certificateFingerprint == identity.certificateFingerprint else {
+            return .unknown
+        }
+        guard let requiredRole else { return .trusted }
+        return record.roles.contains(requiredRole) ? .trusted : .unknown
     }
 
     /// Persists explicit host approval with the configured role scope.
@@ -50,6 +68,11 @@ public actor DefaultIdentityProvider: IdentityProvider {
     /// Validates and atomically consumes a single-use invitation.
     public func consume(_ invitation: PairingInvitation) async throws {
         try await invitationAuthority.consume(invitation)
+    }
+
+    /// Consumes invitation credentials received by the coordinator during session authorization.
+    public func consume(invitationID: InvitationID, proof: Data) async throws {
+        try await invitationAuthority.consume(invitationID: invitationID, proof: proof)
     }
 
     /// Persists revocation so future sessions fail authentication.

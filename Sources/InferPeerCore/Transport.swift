@@ -1,20 +1,100 @@
 import InferPeerProtocol
 
+/// A single-consumer asynchronous transport stream.
+///
+/// Transport adapters use the custom `next` initializer to expose true bounded
+/// backpressure. Test doubles can use the `AsyncThrowingStream`-compatible
+/// initializer and `makeStream` factory.
+public struct TransportMessageStream<Element: Sendable>: AsyncSequence, Sendable {
+    /// The iterator returned by a transport message stream.
+    public struct AsyncIterator: AsyncIteratorProtocol {
+        private var base: AsyncThrowingStream<Element, any Error>.AsyncIterator?
+        private let nextValue: (@Sendable () async throws -> Element?)?
+
+        fileprivate init(base: AsyncThrowingStream<Element, any Error>.AsyncIterator) {
+            self.base = base
+            nextValue = nil
+        }
+
+        fileprivate init(nextValue: @escaping @Sendable () async throws -> Element?) {
+            base = nil
+            self.nextValue = nextValue
+        }
+
+        /// Suspends until the next message arrives or the stream terminates.
+        public mutating func next() async throws -> Element? {
+            if var base {
+                let value = try await base.next()
+                self.base = base
+                return value
+            }
+            return try await nextValue?()
+        }
+    }
+
+    /// Continuation used by test doubles and in-process adapters.
+    public typealias Continuation = AsyncThrowingStream<Element, any Error>.Continuation
+
+    private enum Storage: Sendable {
+        case stream(AsyncThrowingStream<Element, any Error>)
+        case next(@Sendable () async throws -> Element?)
+    }
+
+    private let storage: Storage
+
+    /// Creates a stream backed by an `AsyncThrowingStream` producer.
+    public init(_ build: (Continuation) -> Void) {
+        let stream = AsyncThrowingStream<Element, any Error> { continuation in
+            build(continuation)
+        }
+        storage = .stream(stream)
+    }
+
+    /// Creates a stream backed by a demand-aware receive operation.
+    public init(next: @escaping @Sendable () async throws -> Element?) {
+        storage = .next(next)
+    }
+
+    /// Creates a stream and continuation pair for in-process producers.
+    public static func makeStream(
+        bufferingPolicy: Continuation.BufferingPolicy = .unbounded
+    ) -> (stream: Self, continuation: Continuation) {
+        let pair = AsyncThrowingStream<Element, any Error>.makeStream(
+            bufferingPolicy: bufferingPolicy
+        )
+        return (Self(storage: .stream(pair.stream)), pair.continuation)
+    }
+
+    /// Creates the stream's single-pass iterator.
+    public func makeAsyncIterator() -> AsyncIterator {
+        switch storage {
+        case .stream(let stream):
+            AsyncIterator(base: stream.makeAsyncIterator())
+        case .next(let operation):
+            AsyncIterator(nextValue: operation)
+        }
+    }
+
+    private init(storage: Storage) {
+        self.storage = storage
+    }
+}
+
 /// Caller responses received from a connected coordinator.
 public typealias CallerResponseStream =
-    AsyncThrowingStream<InferPeer_V1_ClientSessionResponse, any Error>
+    TransportMessageStream<InferPeer_V1_ClientSessionResponse>
 
 /// Caller commands received by a coordinator.
 public typealias CallerRequestStream =
-    AsyncThrowingStream<InferPeer_V1_ClientSessionRequest, any Error>
+    TransportMessageStream<InferPeer_V1_ClientSessionRequest>
 
 /// Worker commands received from a connected coordinator.
 public typealias WorkerResponseStream =
-    AsyncThrowingStream<InferPeer_V1_WorkerSessionResponse, any Error>
+    TransportMessageStream<InferPeer_V1_WorkerSessionResponse>
 
 /// Worker events received by a coordinator.
 public typealias WorkerRequestStream =
-    AsyncThrowingStream<InferPeer_V1_WorkerSessionRequest, any Error>
+    TransportMessageStream<InferPeer_V1_WorkerSessionRequest>
 
 /// The caller side of one bidirectional coordinator session.
 public protocol CallerTransportSession: Sendable {
@@ -80,7 +160,7 @@ public enum InboundPeerSession: Sendable {
 }
 
 /// Authenticated sessions accepted by a coordinator transport listener.
-public typealias InboundPeerSessionStream = AsyncThrowingStream<InboundPeerSession, any Error>
+public typealias InboundPeerSessionStream = TransportMessageStream<InboundPeerSession>
 
 /// A running coordinator transport listener.
 public protocol CoordinatorTransportListener: Sendable {
@@ -102,6 +182,39 @@ public protocol PeerTransport: Sendable {
     /// Opens an authenticated worker session to a selected coordinator.
     func connectWorker(to endpoint: PeerEndpoint) async throws -> any WorkerTransportSession
 
+    /// Opens a caller session using invitation credentials selected at join time.
+    func connectCaller(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) async throws -> any CallerTransportSession
+
+    /// Opens a worker session using invitation credentials selected at join time.
+    func connectWorker(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) async throws -> any WorkerTransportSession
+
     /// Closes listeners, sessions, and transport resources owned by this adapter.
     func stop() async
+}
+
+/// A transport that has not implemented invitation-bound joining fails closed.
+public enum PeerTransportJoinError: Error, Equatable, Sendable {
+    case invitationUnsupported
+}
+
+public extension PeerTransport {
+    func connectCaller(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) throws -> any CallerTransportSession {
+        throw PeerTransportJoinError.invitationUnsupported
+    }
+
+    func connectWorker(
+        to endpoint: PeerEndpoint,
+        invitation: PairingInvitation
+    ) throws -> any WorkerTransportSession {
+        throw PeerTransportJoinError.invitationUnsupported
+    }
 }

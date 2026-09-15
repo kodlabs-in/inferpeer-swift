@@ -58,15 +58,20 @@ public struct StoredRequest: Sendable {
     /// The optimistic-concurrency revision assigned by the store.
     public let revision: UInt64
 
+    /// Diagnostic wall-clock time at which the coordinator first accepted the request.
+    public let acceptedAt: Date
+
     /// Creates a stored request snapshot.
     public init(
         submission: RequestSubmission,
         lifecycle: RequestLifecycle,
-        revision: UInt64
+        revision: UInt64,
+        acceptedAt: Date
     ) {
         self.submission = submission
         self.lifecycle = lifecycle
         self.revision = revision
+        self.acceptedAt = acceptedAt
     }
 }
 
@@ -148,6 +153,21 @@ public struct PersistedRequestEvent: Sendable {
     }
 }
 
+/// Compact successful result retained after detailed replay events expire.
+public struct RetainedTerminalResult: Equatable, Sendable {
+    /// Attempt that produced the accepted terminal result.
+    public let attemptID: AttemptID?
+
+    /// Final generation result, including the model revision actually used.
+    public let result: GenerationResult
+
+    /// Creates a compact retained terminal result.
+    public init(attemptID: AttemptID?, result: GenerationResult) {
+        self.attemptID = attemptID
+        self.result = result
+    }
+}
+
 /// An optimistic, atomic request-state and replay-event commit.
 public struct RequestMutation: Sendable {
     /// The request being changed.
@@ -189,6 +209,9 @@ public enum RequestPersistenceError: Error, Equatable, Sendable {
     /// A stable request identifier was reused with different immutable content.
     case requestConflict
 
+    /// A conversation context revision did not advance for its authenticated caller.
+    case conversationRevisionNotIncreasing
+
     /// The request does not exist or is no longer retained.
     case requestNotFound
 
@@ -202,7 +225,7 @@ public enum RequestPersistenceError: Error, Equatable, Sendable {
     case resourceExhausted
 
     /// The requested replay cursor predates retained event history.
-    case replayExpired
+    case replayExpired(RetainedTerminalResult?)
 }
 
 /// Durable job, attempt, deduplication, replay, and acknowledgement storage.
@@ -212,6 +235,9 @@ public protocol JobStore: Sendable {
 
     /// Loads a request only for its authenticated owner.
     func request(requestID: RequestID, callerID: PeerID) async throws -> StoredRequest?
+
+    /// Returns a bounded deterministic snapshot of every nonterminal request for recovery.
+    func nonterminalRequests(limit: Int) async throws -> [StoredRequest]
 
     /// Atomically commits a lifecycle revision and its replay events.
     func commit(_ mutation: RequestMutation) async throws -> StoredRequest

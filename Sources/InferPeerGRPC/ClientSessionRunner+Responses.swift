@@ -24,7 +24,7 @@ extension ClientSessionRunner {
                 throw InferPeerGRPCError.invalidMessage
             }
             try validator.validate(message.metadata)
-            try context.inbound.send(message)
+            try await context.inbound.send(message)
         }
     }
 
@@ -49,7 +49,7 @@ extension ClientSessionRunner {
                 throw InferPeerGRPCError.invalidMessage
             }
             try validator.validate(message.metadata)
-            try context.inbound.send(message)
+            try await context.inbound.send(message)
         }
     }
 
