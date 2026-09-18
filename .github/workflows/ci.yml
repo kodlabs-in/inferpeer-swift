@@ -25,10 +25,10 @@ jobs:
       - name: Verify minimum supported Swift toolchain
         run: swift --version
 
-      # The runner has SwiftLint, but its SwiftFormat binary is named
-      # `swiftformat`, not the `swift-format` executable used by this package.
+      # Install the exact executables used by the package instead of relying on
+      # similarly named tools listed in the runner image inventory.
       - name: Install quality tools
-        run: brew install buf swift-format
+        run: brew install buf swift-format swiftlint
       - name: Verify quality tools
         run: |
           swift-format --version
