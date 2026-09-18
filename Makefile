@@ -30,7 +30,9 @@ test:
 consumer:
 	swift build --package-path Fixtures/CallerOnlyConsumer -Xswiftc -warnings-as-errors
 
-check: lint build test consumer
+# `swift test` compiles all package targets referenced by the test targets, so
+# running `build` here would compile the package twice.
+check: lint test consumer
 
 protobuf-tools:
 	swift package resolve

@@ -8,21 +8,51 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
 jobs:
-  quality:
+  lint:
+    name: Lint and schema
     runs-on: macos-26
-    timeout-minutes: 45
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - name: Verify minimum supported Swift toolchain
         run: swift --version
-      - name: Install quality tools
-        run: brew install buf swift-format swiftlint
-      - name: Resolve pinned dependencies
-        run: swift package resolve
-      - name: Run package quality gate
-        run: make check
+
+      # macos-26 already provides SwiftFormat and SwiftLint; only Buf is not
+      # part of the hosted image.
+      - name: Install schema tool
+        run: brew install buf
+      - name: Run lint and schema checks
+        run: make lint
+
+  validation:
+    name: Test, consumer, and DocC
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify minimum supported Swift toolchain
+        run: swift --version
+      - name: Restore SwiftPM build cache
+        uses: actions/cache@v6
+        with:
+          path: .build
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-spm-
+
+      # swift test compiles every package target referenced by the test targets,
+      # so a separate swift build would compile the package a second time.
+      - name: Run package tests
+        run: swift test -Xswiftc -warnings-as-errors
+      - name: Build caller-only consumer
+        run: swift build --package-path Fixtures/CallerOnlyConsumer -Xswiftc -warnings-as-errors
       - name: Validate DocC
         run: swift package generate-documentation --target InferPeer
