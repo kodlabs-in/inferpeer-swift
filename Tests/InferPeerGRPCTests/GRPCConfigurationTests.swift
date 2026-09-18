@@ -7,6 +7,14 @@ import X509
 
 @Suite("gRPC configuration")
 struct GRPCConfigurationTests {
+    @Test("transport errors expose a named diagnostic instead of an enum ordinal")
+    func transportErrorDescription() {
+        #expect(
+            InferPeerGRPCError.deadlineExceeded.localizedDescription
+                == "InferPeer transport error: deadlineExceeded"
+        )
+    }
+
     @Test("network policy permits only an explicit numeric endpoint")
     func networkPolicyAllowlist() throws {
         let allowed = try PeerEndpoint(host: "127.0.0.1", port: 50_051)

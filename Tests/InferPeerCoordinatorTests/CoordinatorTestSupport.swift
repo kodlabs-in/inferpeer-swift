@@ -165,6 +165,7 @@ actor TestLocalWorker: CoordinatorLocalWorker {
     private let output: String
     private let modelSnapshot: WorkerModelSnapshot
     private let delta: TextDelta
+    private var participation = WorkerParticipationState.available
     private(set) var startedAttemptIDs: [AttemptID] = []
 
     init(peerID: PeerID, model: ModelReference, output: String = "local") throws {
@@ -183,7 +184,7 @@ actor TestLocalWorker: CoordinatorLocalWorker {
     func status() -> LocalWorkerStatus {
         LocalWorkerStatus(
             condition: WorkerCondition(
-                participation: .available,
+                participation: participation,
                 thermalState: .nominal,
                 lowPowerModeEnabled: false
             ),
@@ -224,6 +225,10 @@ actor TestLocalWorker: CoordinatorLocalWorker {
     func cancel(attemptID: AttemptID) {}
 
     func complete(attemptID: AttemptID) {}
+
+    func setParticipation(_ participation: WorkerParticipationState) {
+        self.participation = participation
+    }
 }
 
 final class CoordinatorTestClock: CoreClock, CoreWallClock, @unchecked Sendable {

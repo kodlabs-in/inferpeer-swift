@@ -59,3 +59,14 @@ applicable notices with its distribution.
 
 Model weights, tokenizers, and templates are not bundled with this package. A sandbox application
 must record and ship the license and attribution for each exact model revision it distributes.
+
+The physical validation sandbox currently bundles only
+`mlx-community/Qwen3-0.6B-4bit` at revision
+`73e3e38d981303bc594367cd910ea6eb48349da8`, derived from `Qwen/Qwen3-0.6B`. Its snapshot contains
+the Apache License 2.0 text and declares `Apache-2.0` in the recorded model manifest.
+
+Every identity pinned by the current `Package.resolved` is represented in the Apache-2.0 or MIT
+tables above, and those classifications were checked against the license file in the exact resolved
+checkout. Both groups and the selected Apache-2.0 model permit distribution with InferPeer under
+Apache License 2.0. Binary distributors must still retain every applicable license, copyright, and
+NOTICE attribution required by the artifacts they actually ship.

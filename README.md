@@ -4,9 +4,9 @@ InferPeer is an experimental Swift package for private, text-only inference acro
 devices on an approved local network. A host app can act as a caller, coordinator, worker, or a
 combination of those roles.
 
-> Status: experimental `0.1.0` development. All ten package products now have their initial
-> implementation and unit-test coverage. Physical-device and real-model validation belongs to the
-> upcoming InferPeer sandbox app and is not implied by the package test suite.
+> Status: experimental `0.1.0` development. All ten package products have implementation and
+> unit-test coverage. Physical-device and real-model results are recorded separately in the
+> compatibility report and are not implied by the package test suite alone.
 
 ## Products
 
@@ -107,9 +107,12 @@ adapter remains opt-in.
 
 The package suite validates contracts, persistence, security, discovery policy, telemetry privacy,
 MLX adapter behavior through a deterministic runtime double, facade lifecycle, and real macOS
-loopback gRPC/TLS integration. The following checks still require the sandbox app:
+loopback gRPC/TLS integration. A separate sibling sandbox has exercised real local-model inference,
+cross-device mTLS/Bonjour traffic, lifecycle transitions, retries, replay, and failure policy on
+Mac, iPhone, and iPad. See `COMPATIBILITY.md` for the exact evidence and remaining limitations. The
+sandbox and model weights are intentionally not part of this package repository.
 
-- real model loading and generation on supported Apple hardware;
-- Bonjour discovery and mTLS traffic between separate devices;
-- backgrounding, thermal pressure, memory pressure, cancellation, and reconnection behavior;
-- iPhone, iPad, and Mac installation and end-to-end testing.
+## License
+
+InferPeer is available under the [Apache License 2.0](LICENSE). Dependencies and model artifacts
+remain governed by their respective licences; see [Third-party notices](THIRD_PARTY_NOTICES.md).

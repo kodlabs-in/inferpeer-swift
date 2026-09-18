@@ -1,8 +1,9 @@
+import Foundation
 import GRPCCore
 import InferPeerCore
 
 /// A transport failure which does not expose gRPC or HTTP implementation details to callers.
-public enum InferPeerGRPCError: Error, Equatable, Sendable {
+public enum InferPeerGRPCError: Error, Equatable, LocalizedError, Sendable {
     case invalidConfiguration
     case endpointNotAllowed
     case roleDisabled
@@ -22,6 +23,14 @@ public enum InferPeerGRPCError: Error, Equatable, Sendable {
     case cancelled
     case handshakeRejected(InferPeerError)
     case internalFailure
+
+    /// A stable, implementation-neutral description suitable for host diagnostics.
+    public var errorDescription: String? {
+        if case .handshakeRejected(let rejection) = self {
+            return "InferPeer handshake rejected: \(rejection.message)"
+        }
+        return "InferPeer transport error: \(String(describing: self))"
+    }
 }
 
 enum GRPCErrorMapper {

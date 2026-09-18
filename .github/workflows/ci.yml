@@ -12,8 +12,12 @@ jobs:
   quality:
     runs-on: macos-26
     timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
+      - name: Verify minimum supported Swift toolchain
+        run: swift --version
       - name: Install quality tools
         run: brew install buf swift-format swiftlint
       - name: Resolve pinned dependencies

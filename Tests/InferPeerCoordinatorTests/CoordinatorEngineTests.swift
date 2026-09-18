@@ -94,6 +94,30 @@ struct CoordinatorEngineTests {
         await engine.stop()
     }
 
+    @Test("Host lifecycle refresh updates coordinator-local worker eligibility immediately")
+    func refreshesLocalWorkerStatus() async throws {
+        let fixture = try CoordinatorStoreFixture()
+        defer { fixture.remove() }
+        let model = try makeCoordinatorModel()
+        let workerID = try #require(PeerID(rawValue: "local-worker"))
+        let localWorker = try TestLocalWorker(peerID: workerID, model: model)
+        let engine = CoordinatorEngine(
+            configuration: try makeCoordinatorConfiguration(),
+            store: fixture.store,
+            scheduler: DefaultSchedulerPolicy(configuration: .standard),
+            localWorker: localWorker
+        )
+        try await engine.start(listener: TestCoordinatorListener())
+
+        await localWorker.setParticipation(.unavailable)
+        await engine.refreshLocalWorkerStatus()
+
+        #expect(
+            await engine.workers[workerID]?.status.condition.participation == .unavailable
+        )
+        await engine.stop()
+    }
+
     @Test("Remote interruption retries locally without mixing attempt identity")
     func retriesRemoteAttemptLocally() async throws {
         let fixture = try CoordinatorStoreFixture()

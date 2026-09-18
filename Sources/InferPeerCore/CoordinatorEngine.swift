@@ -121,6 +121,13 @@ public actor CoordinatorEngine: CoordinatorServing {
         }
     }
 
+    /// Refreshes coordinator-local worker eligibility after an explicit host lifecycle change.
+    public func refreshLocalWorkerStatus() async {
+        guard isRunning else { return }
+        await refreshLocalWorker()
+        await scheduleQueuedRequests()
+    }
+
     private func startSessionAcceptance(_ listener: any CoordinatorTransportListener) {
         let sessions = listener.sessions(bufferingLimit: configuration.streamBufferLimit)
         listenerTask = Task { [weak self] in
