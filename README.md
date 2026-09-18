@@ -1,5 +1,7 @@
 # InferPeer
 
+![InferPeer logo](Documentation/Branding/inferpeer-logo-mark.png)
+
 InferPeer is an experimental Swift package for private, text-only inference across trusted Apple
 devices on an approved local network. A host app can act as a caller, coordinator, worker, or a
 combination of those roles.
