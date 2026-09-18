@@ -44,4 +44,4 @@ is unverified, not an implied capability.
       with Apache-2.0 distribution, subject to retaining their applicable notices.
 - [x] Run `make check` from a clean checkout using the documented minimum supported toolchain.
 - [x] Review public API and generated schema diff; update `CHANGELOG.md` and compatibility evidence.
-- [ ] Create and push the `0.1.0` tag only after every demo gate above passes.
+- [x] Create and push the `0.1.0` tag only after every demo gate above passes.

@@ -4,6 +4,8 @@ All notable changes to InferPeer will be documented here.
 
 ## Unreleased
 
+## 0.1.0 - 2026-09-18
+
 - Added the ten-library Swift package architecture and versioned Protobuf protocol.
 - Added durable caller outbox, coordinator jobs, replay cursors, queue limits, retention tombstones,
   and conversation revision ordering.
