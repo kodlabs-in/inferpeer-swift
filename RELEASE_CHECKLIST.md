@@ -42,6 +42,6 @@ is unverified, not an implied capability.
 - [x] Add the repository's Apache License 2.0 source-code `LICENSE`.
 - [x] Confirm the resolved Apache-2.0/MIT dependencies and selected Apache-2.0 model are compatible
       with Apache-2.0 distribution, subject to retaining their applicable notices.
-- [ ] Run `make check` from a clean checkout using the documented minimum supported toolchain.
+- [x] Run `make check` from a clean checkout using the documented minimum supported toolchain.
 - [x] Review public API and generated schema diff; update `CHANGELOG.md` and compatibility evidence.
 - [ ] Create and push the `0.1.0` tag only after every demo gate above passes.

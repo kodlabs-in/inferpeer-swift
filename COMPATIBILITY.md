@@ -103,8 +103,8 @@ The release owner explicitly waived router-disconnect and packet-capture validat
 adapter accepts only a local directory URL, but that is not equivalent to an offline packet-capture
 pass and no such claim is made here.
 
-The remaining gate is a clean-checkout CI pass using the pinned Xcode 26.6/Swift 6.3.3 environment,
-followed by the release commit and tag.
+The clean-checkout CI gate passed using the pinned Xcode 26.6/Swift 6.3.3 environment. The remaining
+publication action is creating and pushing the `0.1.0` tag.
 
 The package repository intentionally contains no production or sandbox application. Physical-device
 evidence comes from the separate sibling sandbox host. Track every remaining gate in
