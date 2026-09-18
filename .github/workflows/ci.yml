@@ -25,15 +25,20 @@ jobs:
       - name: Verify minimum supported Swift toolchain
         run: swift --version
 
-      # macos-26 already provides SwiftFormat and SwiftLint; only Buf is not
-      # part of the hosted image.
-      - name: Install schema tool
-        run: brew install buf
+      # The runner has SwiftLint, but its SwiftFormat binary is named
+      # `swiftformat`, not the `swift-format` executable used by this package.
+      - name: Install quality tools
+        run: brew install buf swift-format
+      - name: Verify quality tools
+        run: |
+          swift-format --version
+          swiftlint version
+          buf --version
       - name: Run lint and schema checks
         run: make lint
 
-  validation:
-    name: Test, consumer, and DocC
+  tests:
+    name: Package tests
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -52,7 +57,41 @@ jobs:
       # so a separate swift build would compile the package a second time.
       - name: Run package tests
         run: swift test -Xswiftc -warnings-as-errors
+
+  consumer:
+    name: Caller-only consumer
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify minimum supported Swift toolchain
+        run: swift --version
+      - name: Restore consumer build cache
+        uses: actions/cache@v6
+        with:
+          path: Fixtures/CallerOnlyConsumer/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-consumer-${{ hashFiles('Package.swift', 'Package.resolved', 'Fixtures/CallerOnlyConsumer/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-consumer-
       - name: Build caller-only consumer
         run: swift build --package-path Fixtures/CallerOnlyConsumer -Xswiftc -warnings-as-errors
+
+  docs:
+    name: DocC
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify minimum supported Swift toolchain
+        run: swift --version
+      # Reuse the test job's cache when available, but never race it while
+      # saving a second cache under the same key.
+      - name: Restore SwiftPM build cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .build
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-spm-
       - name: Validate DocC
-        run: swift package generate-documentation --target InferPeer
+        run: swift package generate-documentation --target InferPeer --disable-indexing
