@@ -143,6 +143,7 @@ actor DirectFakeSessionManager: ResourceSessionManaging {
     private var forgotten: [ResourceID] = []
     private var runDestinations: [ResourceID] = []
     private var pairs = 0
+    private var reconnectSnapshots: [ResourceSnapshot] = []
 
     func pair(_ invitation: ResourcePairingInvitation) throws -> ResourceSnapshot {
         pairs += 1
@@ -162,6 +163,8 @@ actor DirectFakeSessionManager: ResourceSessionManaging {
     }
 
     func disconnect(_ resourceID: ResourceID) {}
+
+    func reconnectPairedResources() -> [ResourceSnapshot] { reconnectSnapshots }
 
     func forget(_ resourceID: ResourceID) {
         forgotten.append(resourceID)
@@ -206,6 +209,10 @@ actor DirectFakeSessionManager: ResourceSessionManaging {
     func forgottenResources() -> [ResourceID] { forgotten }
     func runResources() -> [ResourceID] { runDestinations }
     func pairCount() -> Int { pairs }
+
+    func setReconnectSnapshots(_ snapshots: [ResourceSnapshot]) {
+        reconnectSnapshots = snapshots
+    }
 
     private func exactModel(in query: InferenceQuery) -> ModelKey {
         guard case .exact(let model) = query.modelSelection else {

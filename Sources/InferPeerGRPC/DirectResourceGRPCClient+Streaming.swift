@@ -12,7 +12,7 @@ extension DirectResourceGRPCClient {
     ) async throws -> Result {
         try await stream {
             try await client.watchResource(
-                request: ClientRequest(message: request),
+                request: ClientRequest(message: request, metadata: metadata),
                 options: options,
                 onResponse: onResponse
             )
@@ -29,7 +29,7 @@ extension DirectResourceGRPCClient {
     ) async throws -> Result {
         try await stream {
             try await client.readAsset(
-                request: ClientRequest(message: request),
+                request: ClientRequest(message: request, metadata: metadata),
                 options: options,
                 onResponse: onResponse
             )
@@ -46,7 +46,7 @@ extension DirectResourceGRPCClient {
     ) async throws -> Result {
         try await stream {
             try await client.prepareModel(
-                request: ClientRequest(message: request),
+                request: ClientRequest(message: request, metadata: metadata),
                 options: options,
                 onResponse: onResponse
             )
@@ -62,7 +62,10 @@ extension DirectResourceGRPCClient {
     ) async throws -> InferPeer_V2_UploadAssetResponse {
         try await unary {
             try await client.uploadAsset(
-                request: StreamingClientRequest(producer: requestProducer),
+                request: StreamingClientRequest(
+                    metadata: metadata,
+                    producer: requestProducer
+                ),
                 options: options
             )
         }
@@ -81,7 +84,10 @@ extension DirectResourceGRPCClient {
     ) async throws -> Result {
         try await stream {
             try await client.watchRun(
-                request: StreamingClientRequest(producer: requestProducer),
+                request: StreamingClientRequest(
+                    metadata: metadata,
+                    producer: requestProducer
+                ),
                 options: options,
                 onResponse: onResponse
             )

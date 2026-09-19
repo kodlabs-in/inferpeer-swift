@@ -30,6 +30,22 @@ struct DirectGRPCSessionManagerTests {
         #expect(openings[1].credential == Data([1, 2, 3]))
     }
 
+    @Test("Durable pairings reconnect and refresh authenticated snapshots")
+    func reconnectsDurablePairings() async throws {
+        let fixture = try SessionFixture()
+        try await fixture.storeCredential()
+        let connection = FakeDirectRPCConnection(
+            helloResponse: fixture.helloResponse(),
+            resourceSnapshotResponse: fixture.snapshot()
+        )
+        await fixture.factory.enqueue(connection)
+
+        let snapshots = await fixture.manager.reconnectPairedResources()
+
+        #expect(snapshots.map(\.id) == [fixture.resourceID])
+        #expect(await fixture.factory.recordedOpenings().count == 1)
+    }
+
     @Test("Lost StartRun acknowledgement reconciles with GetRun on the same endpoint")
     func reconcilesLostAcceptanceAcknowledgement() async throws {
         let fixture = try SessionFixture()
@@ -311,7 +327,7 @@ private struct SessionFixture {
         }
     }
 
-    private func snapshot() -> ResourceSnapshot {
+    func snapshot() -> ResourceSnapshot {
         ResourceSnapshot(
             id: resourceID,
             displayName: "Mac",

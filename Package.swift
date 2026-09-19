@@ -111,6 +111,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "X509", package: "swift-certificates"),
+                .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
         .target(
@@ -146,6 +147,8 @@ let package = Package(
                 "InferPeerCore",
                 "InferPeerInference",
                 "InferPeerProtocol",
+                "InferPeerGRPC",
+                "InferPeerSecurity",
                 "InferPeerStorage",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "GRDB", package: "GRDB.swift"),
@@ -297,6 +300,8 @@ let package = Package(
                 "InferPeerCore",
                 "InferPeerInference",
                 "InferPeerProtocol",
+                "InferPeerGRPC",
+                "InferPeerSecurity",
                 "InferPeerStorage",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "GRDB", package: "GRDB.swift"),
@@ -338,7 +343,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "LlamaFramework",
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/b10982/llama-b10982-xcframework.zip",
+            url:
+                "https://github.com/ggml-org/llama.cpp/releases/download/b10982/llama-b10982-xcframework.zip",
             checksum: "a37d89f31a4bafecf6e5b619f0fb6c4d1783adcd1e475e976d52f98396a2c864"
         ),
     ]

@@ -2,17 +2,20 @@ import GRPCCore
 import InferPeerProtocol
 
 /// Generated-service adapter for an application-owned v2 resource handler.
-public struct DirectResourceGRPCService: InferPeer_V2_DirectResourceService.SimpleServiceProtocol {
+public struct DirectResourceGRPCService: InferPeer_V2_DirectResourceService.ServiceProtocol {
     private let handler: any DirectResourceServiceHandling
     private let streamBufferLimit: Int
+    let authorizer: DirectResourceRequestAuthorizer?
 
     /// Creates a service whose inbound streams apply bounded backpressure.
     public init(
         handler: any DirectResourceServiceHandling,
+        authorizer: DirectResourceRequestAuthorizer? = nil,
         streamBufferLimit: Int = 32
     ) throws {
         guard streamBufferLimit > 0 else { throw InferPeerGRPCError.invalidBufferLimit }
         self.handler = handler
+        self.authorizer = authorizer
         self.streamBufferLimit = streamBufferLimit
     }
 

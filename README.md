@@ -2,83 +2,64 @@
 
 ![InferPeer logo](Documentation/Branding/inferpeer-logo-mark.png)
 
-InferPeer is an experimental Swift package for private local AI on directly addressable Apple
-resources. An app discovers approved nearby endpoints, inspects their current capabilities, and
-runs a complete request on the exact local or remote resource it selects.
+InferPeer is a Swift package for private, direct local AI across Apple devices. An app discovers
+approved nearby resources, inspects their live capabilities, and runs a request on the exact local
+or remote resource and exact model selected by the host app.
 
-> Status: the `0.2.0` direct-resource API and `inferpeer.v2` protocol are under development. The
-> package tests establish software contracts; they do not establish the PRD's physical-device,
-> real-model, lifecycle, security, or performance release gates.
+> Release status: `1.0.0` supports streaming text generation and still-image understanding on
+> foreground iOS, iPadOS, and macOS hosts. Audio is outside this release. Existing audio-facing
+> public types and the optional WhisperKit target remain available for source compatibility, but
+> they are not advertised by the signed 1.0 starter catalog.
 
 ## Products
 
 | Product | Responsibility |
 | --- | --- |
 | `InferPeerProtocol` | Isolated v1 and v2 Protobuf messages and protocol negotiation |
-| `InferPeerInference` | Typed text, vision, transcription, and speech requests plus runtime contracts |
-| `InferPeerCore` | Direct resource, discovery, session, run, telemetry, and error contracts |
-| `InferPeerStorage` | Durable GRDB metadata, verified model manifests, deduplication, and owner-scoped resumable assets |
-| `InferPeerSecurity` | Device identity, pairing invitations, certificate verification, and secrets |
-| `InferPeerGRPC` | Generated v2 client/server adapters, authenticated session recovery, and the retained bounded v1 transport |
-| `InferPeerDiscovery` | Wi-Fi Bonjour discovery, advertisement, and numeric LAN endpoint validation |
-| `InferPeerTelemetry` | Content-free timing events and host/platform worker-status sampling |
-| `InferPeerModelStore` | Signed catalogs, resource-aware recommendations, package-owned downloads/imports, verification, registry, and adapter lifecycle |
-| `InferPeerMLX` | Serialized local MLX text generation from a verified model directory |
-| `InferPeer` | Direct-resource facade with explicit local, discovery, exposure, and session dependencies |
+| `InferPeerInference` | Typed inference requests, manifests, events, and runtime contracts |
+| `InferPeerCore` | Direct-resource discovery, sessions, runs, telemetry, and errors |
+| `InferPeerStorage` | Durable metadata, verified manifests, resumable assets, and replay |
+| `InferPeerSecurity` | Identity, single-use invitations, certificate pins, and credentials |
+| `InferPeerGRPC` | Authenticated TLS client/server adapters and bounded streaming |
+| `InferPeerDiscovery` | Wi-Fi Bonjour discovery, advertisement, and LAN validation |
+| `InferPeerTelemetry` | Content-free timing and live resource-status publication |
+| `InferPeerModelStore` | Signed catalogs, recommendations, downloads, verification, and lifecycle |
+| `InferPeerLlama` | Native llama.cpp text and libmtmd still-image execution |
+| `InferPeerMLX` | Apple MLX text execution |
+| `InferPeer` | Public direct-resource facade and host composition |
 
-`InferPeerMLX` is opt-in. The umbrella `InferPeer` product accepts any `InferenceBackend` and does
-not require an inference engine merely to discover or connect to remote resources.
-
-Multimodal adapters implement `DirectInferenceRuntime` and explicitly register the tasks supported
-by each exact artifact. The compatibility `InferenceBackend` path remains text-only and is adapted
-internally without claiming vision, transcription, or speech support.
+Apps link only the adapters they use. A client-only app can discover and call remote resources
+without linking an inference engine. A resource host embeds InferPeer and calls `expose(...)`; the
+SDK never installs or wakes a separate daemon.
 
 ## Requirements
 
 - Swift 6.3 or later
-- macOS 15 or later, or iOS/iPadOS 18 or later
-- `swift-format` and SwiftLint for local quality checks
-- Buf 1.71 or later for Protobuf linting and generation
+- iOS/iPadOS 18 or later, or macOS 15 or later
+- Apple Silicon for the built-in starter artifacts
+- `swift-format`, SwiftLint, and Buf for development checks
 
-Install the development tools with Homebrew:
-
-```sh
-brew install buf swift-format swiftlint
-```
-
-Add `https://github.com/kodlabs-in/inferpeer-swift.git` as a Swift Package dependency, then import
-only the products required by the host application. A host using the MLX adapter for its `.local`
-resource imports both modules:
+Add `https://github.com/kodlabs-in/inferpeer-swift.git` as a Swift Package dependency. A host that
+executes MLX locally imports the public facade plus the adapter:
 
 ```swift
 import InferPeer
 import InferPeerMLX
 ```
 
-## Direct local execution
+## Exact-resource execution
 
-The local executor uses the same public query, event, timeout, queue, cancellation, memory, and
-model-lifecycle contracts as a remote resource, without opening a loopback connection:
+Local execution uses the same typed request and event contracts as remote execution, but remains
+in process. Remote execution connects directly to the selected resource. InferPeer does not
+forward, reroute, combine device memory, or silently substitute another model.
 
 ```swift
-let inferPeer = try InferPeer(
-    configuration: InferPeerConfiguration(
-        localResource: LocalResourceConfiguration(
-            displayName: "This Mac",
-            platform: platform
-        ),
-        localRuntime: MLXInferenceBackend(),
-        localModels: [verifiedArtifact],
-        defaultTextModel: verifiedArtifact.descriptor.reference
-    )
-)
-
 let run = try await inferPeer.run(
     .text(
-        model: .exact(verifiedArtifact.descriptor.reference),
+        model: .exact(selectedModel),
         messages: [.user("Hello")]
     ),
-    resourceId: .local
+    resourceId: selectedResourceID
 )
 
 for try await event in run.events {
@@ -87,97 +68,67 @@ for try await event in run.events {
 let result = try await run.result()
 ```
 
-For a remote resource, the host injects discovery, exposure, and authenticated session adapters,
-pairs the endpoint, and passes that exact `ResourceID` to `run`. InferPeer never reroutes a failed
-request to another resource.
+Call `discovery()` to browse local Bonjour candidates, `pair(_:)` after explicit user approval,
+and `watchResources(_:)` for immutable live resource snapshots. Pairing is single-use and binds the
+resource identity, endpoint, certificate pin, and scoped credential. Installed resources reconnect
+through stored credentials; wrong pins and unapproved principals fail closed.
 
-## Model store and runtime adapters
+## Package-owned model management
 
-`InferPeerModelStore` owns model acquisition. It verifies a signed built-in catalog, optionally
-accepts signed HTTPS catalog updates, evaluates each exact artifact against the selected local or
-connected resource, downloads into durable staging, verifies every declared size and SHA-256,
-then atomically registers the installation. Directory and archive imports enter the same verified
-registry path and require a manifest.
+Open `InferPeerModelStore` with the signed starter catalog and the runtime adapters supported by the
+host. The store evaluates the selected device's OS, hardware identifier, memory, storage, chip
+features, and registered adapter versions. The host or user still chooses the exact artifact.
 
-The store recommends from actual `ResourceSnapshot` facts—OS, hardware identifier, memory,
-storage, chip features, and registered adapter versions. A recommendation never changes the
-resource or silently substitutes a model. Missing measurements remain explicit compatibility
-reasons.
+Downloads use immutable HTTPS URLs, durable staging, exact byte counts, SHA-256 hashes, and atomic
+registration. Interrupted downloads resume; incomplete content is never exposed as installed.
+Registry paths are relative to the current model root, so verified installations survive an app
+container change after an update. Imports use the same verification and registry path.
 
-Hosts register replaceable `InferPeerRuntimeAdapter` objects when opening the store. The adapter
-owns its tokenizer, prompt template, preprocessing, generation loop, and loaded session; the store
-owns download, import, hashes, persistence, lifecycle, and removal. `InferPeerConfiguration` can
-expose the opened store through the umbrella facade.
+The signed `starter-2026-09-19.6` catalog contains:
 
-Package tests use deterministic signed catalogs, model bytes, and mock llama.cpp/WhisperKit
-adapter objects. Shipping catalog entries still require immutable publisher artifacts and the
-physical-device validation records described in `RELEASE_CHECKLIST.md`; unvalidated entries
-cannot be marked stable.
+| Artifact | Runtime | Tasks | Status |
+| --- | --- | --- | --- |
+| Qwen3 0.6B 4-bit | MLX | Text | Stable |
+| Qwen3 0.6B Q8_0 | llama.cpp | Text | Beta |
+| SmolVLM2 500M Q8_0 + projector | llama.cpp/libmtmd | Text + still-image understanding | Stable |
 
-## Local-network setup
+The stable artifacts were downloaded by the package and executed through signed Release builds on
+the physical hardware listed in [COMPATIBILITY.md](COMPATIBILITY.md). Model files remain governed
+by their upstream licenses and are not stored in this repository.
 
-An iOS or iPadOS sandbox app that uses Bonjour must provide a user-facing
-`NSLocalNetworkUsageDescription` and include `_inferpeer._tcp` in `NSBonjourServices`. Discovery is
-restricted to Wi-Fi and accepts only numeric private, link-local, or unique-local endpoints;
-loopback is disabled by default.
+## Host integration
+
+iOS and iPadOS hosts that use Bonjour must include `_inferpeer._tcp` in `NSBonjourServices` and a
+clear `NSLocalNetworkUsageDescription`. A client that selects photos also owns its photo-library
+usage description. Resource hosts must forward lifecycle state and stop remote admission when the
+foreground execution grant disappears. This release intentionally makes no background-execution
+claim.
 
 ## Development
 
-Run the complete local quality gate:
+Run the complete package gate:
 
 ```sh
 make check
 ```
 
-Individual commands are also available:
+Individual gates are available through `make format`, `make lint`, `make build`, `make test`, and
+`make consumer`. SwiftLint warns when cyclomatic complexity exceeds 10 and fails above 15. The
+independent caller-only fixture verifies that a remote client does not link MLX or llama.cpp.
 
-```sh
-make format
-make lint
-make build
-make test
-```
-
-The lint policy warns when cyclomatic complexity exceeds 10 and fails when it exceeds 15. It also
-enforces bounds for function, type, and file length.
-
-The language-neutral schemas live in `Protos/inferpeer/v1` and `Protos/inferpeer/v2`. The v1
-cluster wire contract is not compatible with a v2 direct resource. Generated Swift types and gRPC
-service bindings are committed so package consumers do not need Buf or generator plugins. After a
-schema change, regenerate them with:
-
-```sh
-make generate-protocol
-```
-
-`make check` also builds `Fixtures/CallerOnlyConsumer`, an independent downstream package that
-imports only `InferPeer`. This protects the engine-optional integration boundary and ensures the
-MLX adapter remains opt-in.
+Generated Protobuf and gRPC Swift sources are committed so package consumers do not need Buf. Run
+`make generate-protocol` after changing files under `Protos/inferpeer`.
 
 ## Documentation
 
-- [Compatibility report](COMPATIBILITY.md)
+- [Compatibility and physical-device evidence](COMPATIBILITY.md)
 - [Security boundary and host responsibilities](SECURITY.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [Experimental release checklist](RELEASE_CHECKLIST.md)
+- [1.0 release checklist](RELEASE_CHECKLIST.md)
 - [Changelog](CHANGELOG.md)
 - DocC overview in `Sources/InferPeer/InferPeer.docc`
-
-## Current validation boundary
-
-The package suite validates the v2 direct API, fixed-destination routing, local bypass, queueing,
-cancellation, timeouts, bounded event delivery, model lifecycle and memory admission, resource
-state, task validation, owner-scoped resumable assets, request deduplication, terminal races,
-restart interruption, generated protocol contracts, and the retained v1 behavior. The sibling
-`InferPeerSandbox` app is the integration host used to build and exercise the package on macOS and
-iOS; no RunLocalAI test app is created.
-
-The remaining v2 release gates require the exact physical devices, approved model artifacts,
-native text/VLM/ASR/TTS adapters, live Apple TLS/listener composition, lifecycle entitlements,
-packet-capture/security evidence, and measured benchmarks listed in `RELEASE_CHECKLIST.md` and
-`COMPATIBILITY.md`.
 
 ## License
 
 InferPeer is available under the [Apache License 2.0](LICENSE). Dependencies and model artifacts
-remain governed by their respective licences; see [Third-party notices](THIRD_PARTY_NOTICES.md).
+remain governed by their respective licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

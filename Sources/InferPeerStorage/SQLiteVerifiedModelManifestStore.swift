@@ -45,14 +45,19 @@ public actor SQLiteVerifiedModelManifestStore: VerifiedModelManifestStoring {
     private let configuration: SQLiteStorageConfiguration
     private let dateProvider: any StorageDateProvider
     private let verifier: ModelManifestVerifier
+    private let modelRootDirectory: URL?
 
     /// Opens and migrates the manifest registry without touching model files.
     public init(
         databaseURL: URL,
         configuration: SQLiteStorageConfiguration = .standard,
         dateProvider: any StorageDateProvider = SystemStorageDateProvider(),
-        verifier: ModelManifestVerifier = .init()
+        verifier: ModelManifestVerifier = .init(),
+        modelRootDirectory: URL? = nil
     ) throws {
+        guard modelRootDirectory?.isFileURL != false else {
+            throw ModelManifestRegistrationError.localFileURLRequired
+        }
         database = try StorageConnection.open(
             databaseURL: databaseURL,
             configuration: configuration
@@ -60,6 +65,7 @@ public actor SQLiteVerifiedModelManifestStore: VerifiedModelManifestStoring {
         self.configuration = configuration
         self.dateProvider = dateProvider
         self.verifier = verifier
+        self.modelRootDirectory = modelRootDirectory?.standardizedFileURL
     }
 
     /// Verifies every staged byte before atomically renaming and committing registration.
@@ -78,7 +84,8 @@ public actor SQLiteVerifiedModelManifestStore: VerifiedModelManifestStoring {
             return try Self.duplicate(
                 staged: staged,
                 manifestData: manifestData,
-                existing: existing
+                existing: existing,
+                modelRootDirectory: modelRootDirectory
             )
         }
         return try await install(staged, manifestData: manifestData, locations: locations)
@@ -123,17 +130,20 @@ public actor SQLiteVerifiedModelManifestStore: VerifiedModelManifestStoring {
 
     /// Loads one exact manifest-derived model registration.
     public func model(key: ModelKey) async throws -> StoredVerifiedModelManifest? {
-        try await record(key: key)?.registration()
+        try await record(key: key)?.registration(modelRootDirectory: modelRootDirectory)
     }
 
     /// Returns registrations in stable logical-model and manifest-revision order.
     public func models() async throws -> [StoredVerifiedModelManifest] {
+        let modelRootDirectory = modelRootDirectory
         do {
             return try await database.read { database in
                 try VerifiedModelManifestRecord.fetchAll(
                     database,
                     sql: "SELECT * FROM modelManifest ORDER BY modelID, revision"
-                ).map { try $0.registration() }
+                ).map {
+                    try $0.registration(modelRootDirectory: modelRootDirectory)
+                }
             }
         } catch let error as ModelManifestRegistrationError {
             throw error
@@ -183,16 +193,18 @@ public actor SQLiteVerifiedModelManifestStore: VerifiedModelManifestStoring {
         let registeredAt = Date(
             timeIntervalSinceReferenceDate: (timestamp * 1_000).rounded() / 1_000
         )
+        let modelRootDirectory = modelRootDirectory
         do {
             return try await database.write { database in
                 var record = VerifiedModelManifestRecord(
                     verified: verified,
                     manifestData: manifestData,
-                    registeredAt: registeredAt
+                    registeredAt: registeredAt,
+                    modelRootDirectory: modelRootDirectory
                 )
                 try record.insert(database)
                 try DatabaseQuota.enforce(configuration.maximumDatabaseBytes, in: database)
-                return try record.registration()
+                return try record.registration(modelRootDirectory: modelRootDirectory)
             }
         } catch let error as ModelManifestRegistrationError {
             throw error
@@ -204,14 +216,17 @@ public actor SQLiteVerifiedModelManifestStore: VerifiedModelManifestStoring {
     private static func duplicate(
         staged: VerifiedModelManifest,
         manifestData: Data,
-        existing: VerifiedModelManifestRecord
+        existing: VerifiedModelManifestRecord,
+        modelRootDirectory: URL?
     ) throws -> VerifiedModelRegistrationResult {
         guard existing.manifestDigest == staged.manifestDigest.bytes,
             existing.manifestData == manifestData
         else {
             throw ModelManifestRegistrationError.registrationConflict
         }
-        return .duplicate(try existing.registration())
+        return .duplicate(
+            try existing.registration(modelRootDirectory: modelRootDirectory)
+        )
     }
 
     private static func validatedLocations(

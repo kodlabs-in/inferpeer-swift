@@ -70,6 +70,21 @@ public actor ResourceRegistry {
         apply(replacing(current, execution: execution, models: models))
     }
 
+    /// Replaces the package-managed local inventory after a verified install or removal.
+    package func replaceLocalModels(_ models: [ModelSummary]) {
+        guard let current = snapshotsByID[.local] else { return }
+        let tasks = Set(models.flatMap(\.supportedTasks))
+        let execution: ExecutionAvailability = tasks.isEmpty ? .unavailable : .available
+        apply(
+            replacing(
+                current,
+                execution: execution,
+                capabilities: CapabilitySnapshot(supportedTasks: tasks),
+                models: models
+            )
+        )
+    }
+
     /// Changes only the connection and admission state of one remembered remote resource.
     package func updateRemoteConnection(
         _ connection: ConnectionState,
@@ -84,6 +99,7 @@ public actor ResourceRegistry {
         _ current: ResourceSnapshot,
         connection: ConnectionState? = nil,
         execution: ExecutionAvailability,
+        capabilities: CapabilitySnapshot? = nil,
         models: [ModelSummary]? = nil
     ) -> ResourceSnapshot {
         ResourceSnapshot(
@@ -92,7 +108,7 @@ public actor ResourceRegistry {
             platform: current.platform,
             connection: connection ?? current.connection,
             execution: execution,
-            capabilities: current.capabilities,
+            capabilities: capabilities ?? current.capabilities,
             models: models ?? current.models,
             telemetry: current.telemetry,
             revision: current.revision + 1

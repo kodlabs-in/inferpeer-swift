@@ -1,3 +1,4 @@
+import Foundation
 import GRPCCore
 import InferPeerProtocol
 
@@ -5,17 +6,31 @@ import InferPeerProtocol
 public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceService.ClientProtocol>:
     Sendable
 {
+    /// Binary metadata key carrying a resource-scoped bearer credential.
+    public static var credentialMetadataKey: String { "inferpeer-credential-bin" }
+
     let client: Client
     let options: CallOptions
+    let metadata: Metadata
 
     /// Creates a client with symmetric bounded Protobuf message limits.
-    public init(client: Client, maximumMessageBytes: Int = 4 * 1_024 * 1_024) throws {
+    public init(
+        client: Client,
+        maximumMessageBytes: Int = 4 * 1_024 * 1_024,
+        credential: Data? = nil
+    ) throws {
         guard maximumMessageBytes > 0 else { throw InferPeerGRPCError.invalidConfiguration }
         self.client = client
         var options = CallOptions.defaults
         options.maxRequestMessageBytes = maximumMessageBytes
         options.maxResponseMessageBytes = maximumMessageBytes
         self.options = options
+        var metadata = Metadata()
+        if let credential {
+            guard !credential.isEmpty else { throw InferPeerGRPCError.invalidConfiguration }
+            metadata.addBinary(Array(credential), forKey: Self.credentialMetadataKey)
+        }
+        self.metadata = metadata
     }
 
     /// Calls Pair.
@@ -23,7 +38,10 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
         -> InferPeer_V2_PairResponse
     {
         try await unary {
-            try await client.pair(request: ClientRequest(message: request), options: options)
+            try await client.pair(
+                request: ClientRequest(message: request, metadata: metadata),
+                options: options
+            )
         }
     }
 
@@ -32,7 +50,10 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
         -> InferPeer_V2_HelloResponse
     {
         try await unary {
-            try await client.hello(request: ClientRequest(message: request), options: options)
+            try await client.hello(
+                request: ClientRequest(message: request, metadata: metadata),
+                options: options
+            )
         }
     }
 
@@ -42,7 +63,7 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
     {
         try await unary {
             try await client.prepareAssets(
-                request: ClientRequest(message: request), options: options)
+                request: ClientRequest(message: request, metadata: metadata), options: options)
         }
     }
 
@@ -52,7 +73,7 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
     {
         try await unary {
             try await client.getUploadStatus(
-                request: ClientRequest(message: request), options: options)
+                request: ClientRequest(message: request, metadata: metadata), options: options)
         }
     }
 
@@ -61,7 +82,10 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
         -> InferPeer_V2_StartRunResponse
     {
         try await unary {
-            try await client.startRun(request: ClientRequest(message: request), options: options)
+            try await client.startRun(
+                request: ClientRequest(message: request, metadata: metadata),
+                options: options
+            )
         }
     }
 
@@ -70,7 +94,10 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
         -> InferPeer_V2_GetRunResponse
     {
         try await unary {
-            try await client.getRun(request: ClientRequest(message: request), options: options)
+            try await client.getRun(
+                request: ClientRequest(message: request, metadata: metadata),
+                options: options
+            )
         }
     }
 
@@ -79,7 +106,10 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
         -> InferPeer_V2_CancelRunResponse
     {
         try await unary {
-            try await client.cancelRun(request: ClientRequest(message: request), options: options)
+            try await client.cancelRun(
+                request: ClientRequest(message: request, metadata: metadata),
+                options: options
+            )
         }
     }
 
@@ -89,7 +119,7 @@ public struct DirectResourceGRPCClient<Client: InferPeer_V2_DirectResourceServic
     {
         try await unary {
             try await client.releaseAsset(
-                request: ClientRequest(message: request), options: options)
+                request: ClientRequest(message: request, metadata: metadata), options: options)
         }
     }
 

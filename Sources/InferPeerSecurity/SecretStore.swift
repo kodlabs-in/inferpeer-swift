@@ -36,8 +36,14 @@ private enum SecretStoreAtomicity {
 enum SecuritySecretKey {
     static let deviceCredentials = "device-credentials-v1"
     static let pairingAuthority = "pairing-authority-v1"
+    static let directPairingAuthority = "direct-pairing-authority-v1"
+    static let directResourceCredentials = "direct-resource-access-v1"
 
     static func invitation(_ invitationID: String) -> String {
         "pairing-invitation-v1.\(invitationID)"
+    }
+
+    static func directInvitation(_ invitationID: String) -> String {
+        "direct-pairing-invitation-v1.\(invitationID)"
     }
 }

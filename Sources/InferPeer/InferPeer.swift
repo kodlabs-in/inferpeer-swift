@@ -37,31 +37,20 @@ public actor InferPeer {
     public init(configuration: InferPeerConfiguration) throws {
         try Self.validate(configuration)
         self.configuration = configuration
-        let artifacts = Dictionary(
-            configuration.localModels.map { ($0.descriptor.reference, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        let models = LocalExecutionModel.inventory(configuration)
         let registry = ResourceRegistry(
-            initialSnapshots: [Self.localSnapshot(configuration, artifacts: artifacts)]
+            initialSnapshots: [Self.localSnapshot(configuration, models: models)]
         )
         resourcesRegistry = registry
         discoveryController = configuration.discovery.map(DiscoveryController.init(provider:))
         exposure = configuration.exposure
         sessionManager = configuration.sessionManager
         modelStore = configuration.modelStore
-        let runtime: (any DirectInferenceRuntime)?
-        if let directRuntime = configuration.directRuntime {
-            runtime = directRuntime
-        } else if let localRuntime = configuration.localRuntime {
-            runtime = InferenceBackendDirectRuntime(backend: localRuntime)
-        } else {
-            runtime = nil
-        }
+        let runtime = LocalExecutionRuntimeFactory.make(configuration)
         localExecutor = runtime.map {
             LocalResourceExecutor(
                 runtime: $0,
-                artifacts: artifacts,
-                modelTasks: configuration.localModelTasks,
+                models: models,
                 defaultModels: configuration.defaultModels,
                 maximumPendingRuns: configuration.maximumPendingLocalRuns,
                 modelIdleTimeout: configuration.localModelIdleTimeout,
@@ -85,6 +74,35 @@ public actor InferPeer {
     /// Observes complete resource snapshots, starting with the current state.
     public func watchResources(_ filter: ResourceFilter = .known) async -> ResourceUpdates {
         await resourcesRegistry.updates(filter)
+    }
+
+    /// Refreshes verified package-managed models after an install or removal.
+    @discardableResult
+    public func reloadInstalledModels() async throws -> [InstalledModel] {
+        guard let store = modelStore, let localExecutor else {
+            throw InferPeerError(code: .modelUnavailable, isRetryable: false)
+        }
+        let installed = try await store.installedModels()
+        let models = LocalExecutionModel.inventory(
+            installed,
+            profile: configuration.modelStoreDeviceProfile
+        )
+        try await localExecutor.replaceModels(
+            models,
+            defaultModels: configuration.defaultModels
+        )
+        await resourcesRegistry.replaceLocalModels(
+            models.values
+                .map {
+                    ModelSummary(
+                        key: $0.key,
+                        readiness: .registered,
+                        supportedTasks: $0.tasks
+                    )
+                }
+                .sorted { $0.key.modelID.rawValue < $1.key.modelID.rawValue }
+        )
+        return installed
     }
 
     /// Starts or joins the configured direct-resource browser.
@@ -157,6 +175,15 @@ public actor InferPeer {
         }
         await resourcesRegistry.apply(snapshot)
         return snapshot.id
+    }
+
+    /// Reconnects durable pairings and refreshes their exact model/resource snapshots.
+    @discardableResult
+    public func reconnectPairedResources() async -> [ResourceSnapshot] {
+        guard let sessionManager else { return [] }
+        let snapshots = await sessionManager.reconnectPairedResources()
+        for snapshot in snapshots { await resourcesRegistry.apply(snapshot) }
+        return snapshots
     }
 
     /// Closes one remote session while retaining the resource as disconnected.

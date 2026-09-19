@@ -101,6 +101,29 @@ final class VerifiedPeerRegistry: @unchecked Sendable {
 }
 
 enum PosixTLSFactory {
+    static func directServerSecurity(
+        credentials: GRPCDeviceCredentials
+    ) -> HTTP2ServerTransport.Posix.TransportSecurity {
+        .tls(
+            certificateChain: [certificateSource(credentials)],
+            privateKey: privateKeySource(credentials)
+        ) { tls in
+            tls.requireALPN = true
+        }
+    }
+
+    static func pinnedDirectClientSecurity(
+        expectedFingerprint: CertificateFingerprint,
+        registry: VerifiedPeerRegistry
+    ) -> HTTP2ClientTransport.Posix.TransportSecurity {
+        .tls { tls in
+            tls.serverCertificateVerification = .noHostnameVerification
+            tls.customVerificationCallback = registry.verificationCallback(
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
     static func serverSecurity(
         configuration: GRPCTransportConfiguration,
         registry: VerifiedPeerRegistry

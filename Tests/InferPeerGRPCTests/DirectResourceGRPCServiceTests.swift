@@ -1,3 +1,4 @@
+import Foundation
 import GRPCCore
 import InferPeerCore
 @testable import InferPeerGRPC
@@ -46,6 +47,47 @@ struct DirectResourceGRPCServiceTests {
         }
     }
 
+    @Test("network RPCs require one credential and expose its owner context")
+    func authenticatesNetworkRequests() async throws {
+        let expected = Data(repeating: 0x31, count: 32)
+        let service = try DirectResourceGRPCService(
+            handler: DirectServiceTestHandler(),
+            authorizer: DirectResourceRequestAuthorizer { credential in
+                guard credential == expected else {
+                    throw InferPeerError(code: .unauthenticated, isRetryable: false)
+                }
+                return "owner-1"
+            }
+        )
+        var metadata = Metadata()
+        metadata.addBinary(Array(expected), forKey: "inferpeer-credential-bin")
+        let request = ServerRequest(
+            metadata: metadata,
+            message: InferPeer_V2_HelloRequest.with { $0.protocolMajor = 2 }
+        )
+
+        let response = try await withServerContextRPCCancellationHandle { cancellation in
+            try await service.hello(request: request, context: helloContext(cancellation))
+        }
+
+        #expect(try response.accepted.get().message.resourceID == "owner-1")
+    }
+
+    @Test("network RPCs fail closed when no authorizer is configured")
+    func rejectsUnauthenticatedNetworkRequests() async throws {
+        let service = try DirectResourceGRPCService(handler: DirectServiceTestHandler())
+        let request = ServerRequest(
+            metadata: Metadata(),
+            message: InferPeer_V2_HelloRequest()
+        )
+
+        await #expect(throws: RPCError.self) {
+            _ = try await withServerContextRPCCancellationHandle { cancellation in
+                try await service.hello(request: request, context: helloContext(cancellation))
+            }
+        }
+    }
+
     private func helloContext(
         _ cancellation: ServerContext.RPCCancellationHandle
     ) -> ServerContext {
@@ -74,7 +116,7 @@ private struct DirectServiceTestHandler: DirectResourceServiceHandling {
         if let helloError { throw helloError }
         return InferPeer_V2_HelloResponse.with {
             $0.protocolMajor = request.protocolMajor
-            $0.resourceID = "resource-1"
+            $0.resourceID = DirectResourceRequestContext.principalID ?? "resource-1"
         }
     }
 

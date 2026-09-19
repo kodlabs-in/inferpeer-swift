@@ -83,6 +83,12 @@ public struct InferPeerConfiguration: Sendable {
     /// Optional package-owned catalog, installation, and adapter lifecycle.
     public let modelStore: InferPeerModelStore?
 
+    /// Verified package-managed artifacts exposed by this facade instance.
+    public let modelStoreModels: [InstalledModel]
+
+    /// Actual device facts used when loading package-managed artifacts.
+    public let modelStoreDeviceProfile: ModelStoreDeviceProfile?
+
     /// Creates an explicit dependency graph without opening sockets or loading models.
     public init(
         localResource: LocalResourceConfiguration,
@@ -100,17 +106,23 @@ public struct InferPeerConfiguration: Sendable {
         discovery: (any ResourceDiscovery)? = nil,
         exposure: (any ResourceExposure)? = nil,
         sessionManager: (any ResourceSessionManaging)? = nil,
-        modelStore: InferPeerModelStore? = nil
+        modelStore: InferPeerModelStore? = nil,
+        modelStoreModels: [InstalledModel] = [],
+        modelStoreDeviceProfile: ModelStoreDeviceProfile? = nil
     ) {
         self.localResource = localResource
         self.localRuntime = localRuntime
         self.directRuntime = directRuntime
         self.localModels = localModels
         self.defaultTextModel = defaultTextModel
-        self.localModelTasks = Self.resolvedModelTasks(
+        let configuredTasks = Self.resolvedModelTasks(
             localModelTasks,
             models: localModels,
             hasLegacyTextRuntime: localRuntime != nil
+        )
+        self.localModelTasks = Self.merging(
+            configuredTasks,
+            with: modelStoreModels
         )
         self.defaultModels = Self.resolvedDefaults(
             defaultModels,
@@ -125,6 +137,8 @@ public struct InferPeerConfiguration: Sendable {
         self.exposure = exposure
         self.sessionManager = sessionManager
         self.modelStore = modelStore
+        self.modelStoreModels = modelStoreModels
+        self.modelStoreDeviceProfile = modelStoreDeviceProfile
     }
 
     private static func resolvedModelTasks(
@@ -149,5 +163,16 @@ public struct InferPeerConfiguration: Sendable {
             defaults[.textGeneration] = defaultTextModel
         }
         return defaults
+    }
+
+    private static func merging(
+        _ configured: [ModelKey: Set<InferenceTask>],
+        with installedModels: [InstalledModel]
+    ) -> [ModelKey: Set<InferenceTask>] {
+        var result = configured
+        for model in installedModels {
+            result[model.key] = Set(model.manifest.capabilities.map(\.task))
+        }
+        return result
     }
 }

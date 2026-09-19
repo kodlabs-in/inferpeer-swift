@@ -81,6 +81,52 @@ struct ModelStoreWorkflowTests {
         #expect(await downloader.resumeOffsets == [0, fixture.data.count / 2])
     }
 
+    @Test("A verified staging download replaces an orphaned destination")
+    func recoversVerifiedStagingAfterInterruptedRegistration() async throws {
+        let fixture = try ModelStoreFixture(data: Data("complete-staged-model".utf8))
+        defer { fixture.remove() }
+        let downloader = MemoryModelDownloader(data: fixture.data)
+        let store = try await InferPeerModelStore.open(
+            configuration: fixture.configuration(
+                downloader: downloader,
+                adapters: [TestRuntimeAdapter()]
+            )
+        )
+        let versionRoot = fixture.root
+            .appendingPathComponent("installed", isDirectory: true)
+            .appendingPathComponent(fixture.entry.metadata.key.modelID.rawValue, isDirectory: true)
+            .appendingPathComponent(fixture.entry.metadata.key.version, isDirectory: true)
+        let staging = versionRoot.appendingPathComponent("download.staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try fixture.data.write(to: staging.appendingPathComponent("model.gguf"))
+        let verified = try ModelManifestVerifier().verify(fixture.entry.manifest, in: staging)
+        let orphanedDestination = versionRoot.appendingPathComponent(
+            verified.key.revision,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: orphanedDestination,
+            withIntermediateDirectories: true
+        )
+        try Data("stale-model".utf8).write(
+            to: orphanedDestination.appendingPathComponent("model.gguf")
+        )
+
+        let installation = try await store.install(
+            fixture.entry.metadata.key,
+            task: .textGeneration,
+            on: makeDevice(),
+            authorization: ModelDownloadAuthorization(resourceID: .local)
+        )
+        let installed = try #require(try await collect(installation).installed)
+
+        #expect(
+            try Data(contentsOf: installed.directoryURL.appendingPathComponent("model.gguf"))
+                == fixture.data
+        )
+        #expect(await downloader.calls == 0)
+    }
+
     @Test("Corrupt model bytes never become installed")
     func rejectsCorruptDownloads() async throws {
         let fixture = try ModelStoreFixture()
@@ -222,6 +268,7 @@ struct ModelStoreWorkflowTests {
         )
         #expect(try await reopened.status(of: repaired.key)?.state == .installed)
     }
+
 }
 
 private func verifyRuntimeLifecycle(
@@ -255,7 +302,7 @@ private func verifyRuntimeLifecycle(
     #expect(await adapter.probe.unloadCount == 1)
 }
 
-private func collect(
+func collect(
     _ installation: ModelInstallation
 ) async throws -> (
     states: [ModelInstallationState],
@@ -278,7 +325,7 @@ private func collect(
     return (states, progress, installed)
 }
 
-private func collect(
+func collect(
     _ stream: DirectRuntimeEventStream
 ) async throws -> (text: String, completedModel: ModelKey?) {
     var text = ""

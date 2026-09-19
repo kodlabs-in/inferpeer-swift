@@ -6,10 +6,9 @@ actor LocalResourceExecutor {
         let attemptID: AttemptID
         let continuation: CheckedContinuation<Void, any Error>
     }
-    private let runtime: any DirectInferenceRuntime
-    private let artifacts: [ModelKey: LocalModelArtifact]
-    private let modelTasks: [ModelKey: Set<InferenceTask>]
-    private let defaultModels: [InferenceTask: ModelKey]
+    private let runtime: any LocalExecutionRuntime
+    private var models: [ModelKey: LocalExecutionModel]
+    private var defaultModels: [InferenceTask: ModelKey]
     private let maximumPendingRuns: Int
     private let modelIdleTimeout: Duration
     private let memoryAvailability: (any MemoryAvailabilityProvider)?
@@ -22,9 +21,8 @@ actor LocalResourceExecutor {
     private var isStopped = false
 
     init(
-        runtime: any DirectInferenceRuntime,
-        artifacts: [ModelKey: LocalModelArtifact],
-        modelTasks: [ModelKey: Set<InferenceTask>],
+        runtime: any LocalExecutionRuntime,
+        models: [ModelKey: LocalExecutionModel],
         defaultModels: [InferenceTask: ModelKey],
         maximumPendingRuns: Int,
         modelIdleTimeout: Duration,
@@ -37,8 +35,7 @@ actor LocalResourceExecutor {
             ) async -> Void
     ) {
         self.runtime = runtime
-        self.artifacts = artifacts
-        self.modelTasks = modelTasks
+        self.models = models
         self.defaultModels = defaultModels
         self.maximumPendingRuns = maximumPendingRuns
         self.modelIdleTimeout = modelIdleTimeout
@@ -53,7 +50,7 @@ actor LocalResourceExecutor {
     ) throws -> DirectRuntimeExecution {
         try requireRunning()
         let model = try resolveModel(query.modelSelection, task: query.task)
-        guard modelTasks[model]?.contains(query.task) == true else {
+        guard models[model]?.tasks.contains(query.task) == true else {
             throw InferPeerError(
                 code: .unsupportedTask,
                 message: "The selected local model does not support this task",
@@ -103,7 +100,7 @@ actor LocalResourceExecutor {
 
     func prepareModel(_ model: ModelKey, attemptID: AttemptID) async throws {
         try requireRunning()
-        guard artifacts[model] != nil else {
+        guard models[model] != nil else {
             throw InferPeerError(
                 code: .modelUnavailable,
                 message: "The selected model is not installed on this resource",
@@ -148,6 +145,22 @@ actor LocalResourceExecutor {
         }
         await unloadForStop()
     }
+
+    func replaceModels(
+        _ models: [ModelKey: LocalExecutionModel],
+        defaultModels: [InferenceTask: ModelKey]
+    ) async throws {
+        guard activeAttempt == nil, pendingRuns.isEmpty else {
+            throw InferPeerError(code: .queueFull, isRetryable: true)
+        }
+        if let loadedModel, models[loadedModel] == nil {
+            await unloadCurrentModel()
+        }
+        self.models = models
+        self.defaultModels = defaultModels.filter { task, model in
+            models[model]?.tasks.contains(task) == true
+        }
+    }
 }
 
 private extension LocalResourceExecutor {
@@ -162,7 +175,7 @@ private extension LocalResourceExecutor {
         case .taskDefault:
             model = defaultModels[task]
         }
-        guard let model, artifacts[model] != nil else {
+        guard let model, models[model] != nil else {
             throw InferPeerError(
                 code: .modelUnavailable,
                 message: "The selected model is not installed on this resource",
@@ -241,13 +254,13 @@ private extension LocalResourceExecutor {
     private func validateMemory(for execution: DirectRuntimeExecution) async throws {
         guard let memoryAvailability,
             let safeAdditionalBytes = await memoryAvailability.safeAdditionalMemoryBytes(),
-            let artifact = artifacts[execution.model]
+            models[execution.model] != nil
         else {
             return
         }
         let estimate = try await runtime.estimateResources(
             for: execution.query,
-            using: artifact.descriptor
+            using: execution.model
         )
         guard let neededBytes = estimate.peakMemoryBytes else { return }
         guard neededBytes <= safeAdditionalBytes else {
@@ -263,7 +276,7 @@ private extension LocalResourceExecutor {
         guard loadedModel != model,
             let memoryAvailability,
             let safeAdditionalBytes = await memoryAvailability.safeAdditionalMemoryBytes(),
-            let neededBytes = artifacts[model]?.descriptor.measuredMemoryBytes
+            let neededBytes = models[model]?.measuredMemoryBytes
         else {
             return
         }
@@ -319,7 +332,7 @@ private extension LocalResourceExecutor {
             self.loadedModel = nil
             await resourceStateChanged(.busy, loadedModel, .registered)
         }
-        guard let artifact = artifacts[model] else {
+        guard models[model] != nil else {
             throw InferPeerError(
                 code: .modelUnavailable,
                 message: "The selected model is not installed on this resource",
@@ -330,7 +343,7 @@ private extension LocalResourceExecutor {
         try emit(.loadingModel(model))
         await resourceStateChanged(.busy, model, .preparing)
         do {
-            try await runtime.loadModel(artifact)
+            try await runtime.loadModel(model)
         } catch {
             await resourceStateChanged(.busy, model, .failed)
             throw error

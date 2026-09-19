@@ -1,4 +1,5 @@
 import Foundation
+import GRPCCore
 import InferPeerCore
 import InferPeerInference
 import InferPeerProtocol
@@ -7,6 +8,16 @@ import InferPeerProtocol
 public protocol AuthenticatedDirectResourceRPC: Sendable {
     func pair(_ request: InferPeer_V2_PairRequest) async throws -> InferPeer_V2_PairResponse
     func hello(_ request: InferPeer_V2_HelloRequest) async throws -> InferPeer_V2_HelloResponse
+    func resourceSnapshot(knownRevision: UInt64) async throws -> ResourceSnapshot?
+    func prepareAssets(
+        _ request: InferPeer_V2_PrepareAssetsRequest
+    ) async throws -> InferPeer_V2_PrepareAssetsResponse
+    func uploadAsset(
+        requestProducer:
+            @Sendable @escaping (
+                RPCWriter<InferPeer_V2_UploadAssetRequest>
+            ) async throws -> Void
+    ) async throws -> InferPeer_V2_UploadAssetResponse
     func prepareModel(
         _ request: InferPeer_V2_PrepareModelRequest,
         onUpdate: @escaping @Sendable (InferPeer_V2_PrepareModelResponse) async throws -> Void
@@ -23,7 +34,40 @@ public protocol AuthenticatedDirectResourceRPC: Sendable {
     func cancelRun(
         _ request: InferPeer_V2_CancelRunRequest
     ) async throws -> InferPeer_V2_CancelRunResponse
+    func releaseAsset(
+        _ request: InferPeer_V2_ReleaseAssetRequest
+    ) async throws -> InferPeer_V2_ReleaseAssetResponse
     func close() async
+}
+
+public extension AuthenticatedDirectResourceRPC {
+    // Defaults preserve source compatibility for clients that do not upload assets.
+    // swiftlint:disable async_without_await
+    func prepareAssets(
+        _: InferPeer_V2_PrepareAssetsRequest
+    ) async throws -> InferPeer_V2_PrepareAssetsResponse {
+        throw InferPeerError(code: .unsupportedTask, isRetryable: false)
+    }
+
+    func uploadAsset(
+        requestProducer _:
+            @Sendable @escaping (
+                RPCWriter<InferPeer_V2_UploadAssetRequest>
+            ) async throws -> Void
+    ) async throws -> InferPeer_V2_UploadAssetResponse {
+        throw InferPeerError(code: .unsupportedTask, isRetryable: false)
+    }
+
+    func releaseAsset(
+        _: InferPeer_V2_ReleaseAssetRequest
+    ) async throws -> InferPeer_V2_ReleaseAssetResponse {
+        throw InferPeerError(code: .unsupportedTask, isRetryable: false)
+    }
+
+    func resourceSnapshot(knownRevision _: UInt64) async throws -> ResourceSnapshot? {
+        nil
+    }
+    // swiftlint:enable async_without_await
 }
 
 /// Opens TLS channels pinned to the exact endpoint selected during pairing.
@@ -55,6 +99,33 @@ public protocol DirectRunWireCoding: Sendable {
     func encode(_ query: InferenceQuery, options: RunOptions) throws
         -> EncodedDirectRunSpecification
     func decode(_ event: InferPeer_V2_RunEvent) throws -> RunEvent
+}
+
+/// Decoded immutable run inputs used by a direct-resource host.
+public struct DecodedDirectRunSpecification: Sendable {
+    /// Validated query that the selected host must execute.
+    public let query: InferenceQuery
+    /// Validated delivery and admission options for the run.
+    public let options: RunOptions
+
+    /// Creates decoded host inputs from a validated query and options.
+    public init(query: InferenceQuery, options: RunOptions) {
+        self.query = query
+        self.options = options
+    }
+}
+
+/// Bidirectional production wire contract shared by clients and resource hosts.
+public protocol DirectResourceWireCoding: DirectRunWireCoding {
+    func decode(
+        _ specification: EncodedDirectRunSpecification
+    ) throws -> DecodedDirectRunSpecification
+    func encode(
+        _ event: RunEvent,
+        requestID: RequestID,
+        incarnation: String,
+        sequence: UInt64
+    ) throws -> InferPeer_V2_RunEvent
 }
 
 /// Bounded reconnect attempts used for ambiguous acceptance and initial connection.
@@ -136,6 +207,36 @@ public struct GRPCDirectResourceRPCConnection<
         try await client.hello(request)
     }
 
+    /// Reads the first resource update newer than the supplied revision.
+    public func resourceSnapshot(knownRevision: UInt64) async throws -> ResourceSnapshot? {
+        try await client.watchResource(
+            InferPeer_V2_WatchResourceRequest.with { $0.knownRevision = knownRevision }
+        ) { response in
+            for try await update in response.messages {
+                guard case .snapshot(let snapshot)? = update.payload else { continue }
+                return try DirectWireMapper.resource(snapshot)
+            }
+            return nil
+        }
+    }
+
+    /// Requests owner-scoped upload tickets for declared input assets.
+    public func prepareAssets(
+        _ request: InferPeer_V2_PrepareAssetsRequest
+    ) async throws -> InferPeer_V2_PrepareAssetsResponse {
+        try await client.prepareAssets(request)
+    }
+
+    /// Streams one declared asset and returns its owner-scoped receipt.
+    public func uploadAsset(
+        requestProducer:
+            @Sendable @escaping (
+                RPCWriter<InferPeer_V2_UploadAssetRequest>
+            ) async throws -> Void
+    ) async throws -> InferPeer_V2_UploadAssetResponse {
+        try await client.uploadAsset(requestProducer: requestProducer)
+    }
+
     /// Streams model preparation updates to the supplied observer.
     public func prepareModel(
         _ request: InferPeer_V2_PrepareModelRequest,
@@ -192,6 +293,13 @@ public struct GRPCDirectResourceRPCConnection<
         -> InferPeer_V2_CancelRunResponse
     {
         try await client.cancelRun(request)
+    }
+
+    /// Releases one owner-scoped remote asset receipt.
+    public func releaseAsset(
+        _ request: InferPeer_V2_ReleaseAssetRequest
+    ) async throws -> InferPeer_V2_ReleaseAssetResponse {
+        try await client.releaseAsset(request)
     }
 
     /// Closes the underlying channel through its injected shutdown operation.

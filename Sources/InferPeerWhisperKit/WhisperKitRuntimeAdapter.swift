@@ -23,8 +23,9 @@ public struct WhisperKitRuntimeAdapter: InferPeerRuntimeAdapter, Sendable {
         for model: ModelManifest,
         on _: ModelStoreDeviceProfile
     ) async -> InferPeerRuntimeModelSupport {
-        guard model.runtime.runtimeIdentifier.caseInsensitiveCompare(runtimeID.rawValue)
-            == .orderedSame
+        guard
+            model.runtime.runtimeIdentifier.caseInsensitiveCompare(runtimeID.rawValue)
+                == .orderedSame
         else {
             return .unsupported(reasons: [.adapterRejected("runtime identifier is not whisperkit")])
         }
@@ -74,9 +75,11 @@ private extension WhisperKitRuntimeAdapter {
     ]
 
     static func tokenizerFolder(in model: InstalledModel) throws -> URL {
-        guard let tokenizer = model.manifest.files.first(where: {
-            $0.role == .tokenizer && $0.relativePath.hasSuffix("tokenizer.json")
-        }) else {
+        guard
+            let tokenizer = model.manifest.files.first(where: {
+                $0.role == .tokenizer && $0.relativePath.hasSuffix("tokenizer.json")
+            })
+        else {
             throw WhisperKitAdapterError.invalidManifest
         }
         return model.directoryURL
@@ -286,7 +289,8 @@ private extension WhisperKitModelSession {
         input: Input,
         modelKey: ModelKey
     ) -> RunResult {
-        let language = results.first(where: { !$0.language.isEmpty })?.language
+        let language =
+            results.first(where: { !$0.language.isEmpty })?.language
             ?? input.language
             ?? "und"
         let outputTokens = results.flatMap(\.segments).reduce(0) { total, segment in

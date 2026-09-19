@@ -97,13 +97,14 @@ extension InferPeerModelStore {
 
     func reconcileInstallations() async throws {
         let verifier = ModelManifestVerifier()
-        for model in try await registry.installedModels() {
+        for model in try await registry.reconcilableModels() {
             do {
                 let verified = try verifier.verify(model.manifest, in: model.directoryURL)
                 guard verified.key == model.key else {
                     try await registry.updateInstallationState(.corrupt, key: model.key)
                     continue
                 }
+                try await registry.updateInstallationState(.installed, key: model.key)
             } catch {
                 try await registry.updateInstallationState(.corrupt, key: model.key)
             }

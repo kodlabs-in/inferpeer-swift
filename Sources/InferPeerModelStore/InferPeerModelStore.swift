@@ -93,8 +93,14 @@ public actor InferPeerModelStore {
         let verifier = ModelCatalogVerifier(trustedKeys: configuration.trustedCatalogKeys)
         let catalog = try verifier.verify(configuration.builtInCatalog)
         let adapters = try RuntimeAdapterRegistry(configuration.runtimeAdapters)
-        let registry = try ModelStoreRegistry(databaseURL: layout.databaseURL)
-        let manifestStore = try SQLiteVerifiedModelManifestStore(databaseURL: layout.databaseURL)
+        let registry = try ModelStoreRegistry(
+            databaseURL: layout.databaseURL,
+            installedDirectory: layout.installedDirectory
+        )
+        let manifestStore = try SQLiteVerifiedModelManifestStore(
+            databaseURL: layout.databaseURL,
+            modelRootDirectory: layout.installedDirectory
+        )
         try await registry.replaceCatalog(catalog)
         try Self.persist(configuration.builtInCatalog, in: layout)
         let store = InferPeerModelStore(

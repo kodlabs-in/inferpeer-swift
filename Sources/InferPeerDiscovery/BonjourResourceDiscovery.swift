@@ -10,6 +10,7 @@ public actor BonjourResourceDiscovery: ResourceDiscovery {
     private var consumeTask: Task<Void, Never>?
     private var candidateIDs: [BonjourObservationKey: CandidateID] = [:]
     private var active = false
+    private var subscriptionID: UUID?
 
     /// Creates a stopped direct-resource browser. Initialization performs no network work.
     public init(configuration: BonjourDiscoveryConfiguration = .init()) {
@@ -34,7 +35,9 @@ public actor BonjourResourceDiscovery: ResourceDiscovery {
             throw PeerDiscoveryError.invalidBufferingLimit
         }
         guard !active else { throw PeerDiscoveryError.discoveryAlreadyActive }
+        let subscriptionID = UUID()
         active = true
+        self.subscriptionID = subscriptionID
 
         do {
             let sourceEvents = try await source.start(
@@ -45,22 +48,35 @@ public actor BonjourResourceDiscovery: ResourceDiscovery {
             )
             continuation = pair.continuation
             pair.continuation.onTermination = { [weak self] _ in
-                Task { await self?.stop() }
+                Task { await self?.stop(subscriptionID: subscriptionID) }
             }
             consumeTask = Task { [weak self] in
-                await self?.consume(sourceEvents)
+                await self?.consume(sourceEvents, subscriptionID: subscriptionID)
             }
             return pair.stream
         } catch {
-            active = false
+            if self.subscriptionID == subscriptionID {
+                active = false
+                self.subscriptionID = nil
+            }
             throw error
         }
     }
 
     /// Stops the browser and releases all ephemeral candidate state.
     public func stop() async {
+        await stopActiveSubscription()
+    }
+
+    private func stop(subscriptionID: UUID) async {
+        guard self.subscriptionID == subscriptionID else { return }
+        await stopActiveSubscription()
+    }
+
+    private func stopActiveSubscription() async {
         guard active else { return }
         active = false
+        subscriptionID = nil
         consumeTask?.cancel()
         consumeTask = nil
         await source.stop()
@@ -69,17 +85,20 @@ public actor BonjourResourceDiscovery: ResourceDiscovery {
         continuation = nil
     }
 
-    private func consume(_ events: BonjourBrowseEventStream) async {
+    private func consume(
+        _ events: BonjourBrowseEventStream,
+        subscriptionID: UUID
+    ) async {
         do {
             for try await event in events {
                 try Task.checkCancellation()
                 receive(event)
             }
-            finish()
+            finish(subscriptionID: subscriptionID)
         } catch is CancellationError {
-            finish()
+            finish(subscriptionID: subscriptionID)
         } catch {
-            finish(throwing: error)
+            finish(subscriptionID: subscriptionID, throwing: error)
         }
     }
 
@@ -140,8 +159,13 @@ public actor BonjourResourceDiscovery: ResourceDiscovery {
         Task { await source.stop() }
     }
 
-    private func finish(throwing error: (any Error)? = nil) {
+    private func finish(
+        subscriptionID: UUID? = nil,
+        throwing error: (any Error)? = nil
+    ) {
+        if let subscriptionID, self.subscriptionID != subscriptionID { return }
         active = false
+        self.subscriptionID = nil
         consumeTask = nil
         candidateIDs.removeAll()
         if let error {

@@ -30,8 +30,9 @@ public struct MLXRuntimeAdapter: InferPeerRuntimeAdapter, Sendable {
         for model: ModelManifest,
         on _: ModelStoreDeviceProfile
     ) async -> ModelSupport {
-        guard model.runtime.runtimeIdentifier.caseInsensitiveCompare(runtimeID.rawValue)
-            == .orderedSame
+        guard
+            model.runtime.runtimeIdentifier.caseInsensitiveCompare(runtimeID.rawValue)
+                == .orderedSame
         else {
             return .unsupported(reasons: [.adapterRejected("runtime identifier is not mlx")])
         }
@@ -213,9 +214,11 @@ private extension MLXModelStoreSession {
         _ type: ProtocolIdentifier<Domain>.Type,
         prefix: String
     ) -> ProtocolIdentifier<Domain> {
-        guard let identifier = ProtocolIdentifier<Domain>(
-            rawValue: "\(prefix)-\(UUID().uuidString.lowercased())"
-        ) else {
+        guard
+            let identifier = ProtocolIdentifier<Domain>(
+                rawValue: "\(prefix)-\(UUID().uuidString.lowercased())"
+            )
+        else {
             preconditionFailure("Generated InferPeer identifier must be valid")
         }
         return identifier

@@ -47,20 +47,25 @@ extension ModelStoreRegistry {
         }
     }
 
-    static func installedModel(_ row: Row) throws -> InstalledModel {
+    static func installedModel(_ row: Row, installedDirectory: URL) throws -> InstalledModel {
         guard let modelID = ModelID(rawValue: row["model_id"]),
             let bytes = UInt64(row["installed_bytes"] as String)
         else {
             throw ModelStoreRegistryError.corruptData
         }
         let revision: String = row["manifest_revision"]
+        let catalogVersion: String = row["catalog_version"]
         let key = try ModelReference(modelID: modelID, revision: revision)
         let manifest: ModelManifest = try decode(row["manifest_payload"])
-        let path: String = row["directory_path"]
+        let directoryURL =
+            installedDirectory
+            .appendingPathComponent(modelID.rawValue, isDirectory: true)
+            .appendingPathComponent(catalogVersion, isDirectory: true)
+            .appendingPathComponent(revision, isDirectory: true)
         return InstalledModel(
             key: key,
             manifest: manifest,
-            directoryURL: URL(fileURLWithPath: path, isDirectory: true),
+            directoryURL: directoryURL,
             installedByteCount: bytes
         )
     }
@@ -164,7 +169,11 @@ extension ModelStoreRegistry {
                 entry.metadata.key.modelID.rawValue,
                 entry.metadata.key.version,
                 model.key.revision,
-                model.directoryURL.path,
+                [
+                    entry.metadata.key.modelID.rawValue,
+                    entry.metadata.key.version,
+                    model.key.revision,
+                ].joined(separator: "/"),
                 ModelInstallationState.installed.rawValue,
                 installedAt.timeIntervalSince1970,
             ]

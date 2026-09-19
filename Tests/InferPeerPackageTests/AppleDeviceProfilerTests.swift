@@ -20,9 +20,10 @@ struct AppleDeviceProfilerTests {
         let physicalMemory = ProcessInfo.processInfo.physicalMemory
         #expect(snapshot.modelStoreProfile.physicalMemoryBytes == physicalMemory)
         #expect(snapshot.modelStoreProfile.freeStorageBytes != nil)
-        #expect(snapshot.telemetry.measurements[
-            ModelStoreDeviceProfile.physicalMemoryMeasurement
-        ]?.quality == .measured)
+        #expect(
+            snapshot.telemetry.measurements[
+                ModelStoreDeviceProfile.physicalMemoryMeasurement
+            ]?.quality == .measured)
         #if arch(arm64)
             #expect(snapshot.chipFeatures.contains("apple-silicon"))
         #endif

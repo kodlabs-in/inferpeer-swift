@@ -8,6 +8,11 @@ extension InferPeerModelStore {
         staging: URL,
         installRoot: URL
     ) async throws -> InstalledModel {
+        try await removeOrphanedDestination(
+            for: entry,
+            staging: staging,
+            installRoot: installRoot
+        )
         let result = try await manifestStore.register(
             entry.manifest,
             stagingDirectory: staging,
@@ -31,6 +36,21 @@ extension InferPeerModelStore {
             directoryURL: verified.directoryURL,
             installedByteCount: entry.manifest.files.reduce(0) { $0 + $1.byteCount }
         )
+    }
+
+    private func removeOrphanedDestination(
+        for entry: ModelCatalogEntry,
+        staging: URL,
+        installRoot: URL
+    ) async throws {
+        let staged = try ModelManifestVerifier().verify(entry.manifest, in: staging)
+        guard try await manifestStore.model(key: staged.key) == nil else { return }
+        let destination = installRoot.appendingPathComponent(
+            staged.key.revision,
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: destination.path) else { return }
+        try Self.removeCorruptInstallation(destination, inside: installRoot)
     }
 
     private func resolveDuplicate(

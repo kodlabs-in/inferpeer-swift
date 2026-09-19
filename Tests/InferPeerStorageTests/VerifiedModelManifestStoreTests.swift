@@ -252,7 +252,7 @@ struct VerifiedModelManifestStoreTests {
     }
 }
 
-private struct ModelManifestFixture {
+struct ModelManifestFixture {
     let installRoot: URL
     let stagingDirectory: URL
     let manifest: ModelManifest

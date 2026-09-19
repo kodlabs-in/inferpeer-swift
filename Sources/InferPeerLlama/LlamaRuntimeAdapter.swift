@@ -26,8 +26,9 @@ public struct LlamaRuntimeAdapter: InferPeerRuntimeAdapter, Sendable {
         for model: ModelManifest,
         on _: ModelStoreDeviceProfile
     ) async -> ModelSupport {
-        guard model.runtime.runtimeIdentifier.caseInsensitiveCompare(runtimeID.rawValue)
-            == .orderedSame
+        guard
+            model.runtime.runtimeIdentifier.caseInsensitiveCompare(runtimeID.rawValue)
+                == .orderedSame
         else {
             return .unsupported(reasons: [.adapterRejected("runtime identifier is not llama.cpp")])
         }

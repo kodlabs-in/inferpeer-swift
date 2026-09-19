@@ -62,6 +62,7 @@ actor FakeDirectRPCConnectionFactory: AuthenticatedDirectResourceRPCFactory {
 actor FakeDirectRPCConnection: AuthenticatedDirectResourceRPC {
     private let pairResponse: InferPeer_V2_PairResponse?
     private let helloResponse: InferPeer_V2_HelloResponse?
+    private let resourceSnapshotResponse: ResourceSnapshot?
     private let startResponse: InferPeer_V2_StartRunResponse?
     private let startError: InferPeerError?
     private let getRunResponse: InferPeer_V2_GetRunResponse?
@@ -75,6 +76,7 @@ actor FakeDirectRPCConnection: AuthenticatedDirectResourceRPC {
     init(
         pairResponse: InferPeer_V2_PairResponse? = nil,
         helloResponse: InferPeer_V2_HelloResponse? = nil,
+        resourceSnapshotResponse: ResourceSnapshot? = nil,
         startResponse: InferPeer_V2_StartRunResponse? = nil,
         startError: InferPeerError? = nil,
         getRunResponse: InferPeer_V2_GetRunResponse? = nil,
@@ -83,6 +85,7 @@ actor FakeDirectRPCConnection: AuthenticatedDirectResourceRPC {
     ) {
         self.pairResponse = pairResponse
         self.helloResponse = helloResponse
+        self.resourceSnapshotResponse = resourceSnapshotResponse
         self.startResponse = startResponse
         self.startError = startError
         self.getRunResponse = getRunResponse
@@ -100,6 +103,10 @@ actor FakeDirectRPCConnection: AuthenticatedDirectResourceRPC {
             throw InferPeerError(code: .connectionLost, isRetryable: true)
         }
         return helloResponse
+    }
+
+    func resourceSnapshot(knownRevision _: UInt64) -> ResourceSnapshot? {
+        resourceSnapshotResponse
     }
 
     func prepareModel(

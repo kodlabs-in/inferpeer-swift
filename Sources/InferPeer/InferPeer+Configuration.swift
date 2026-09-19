@@ -5,9 +5,12 @@ extension InferPeer {
     static func validate(_ configuration: InferPeerConfiguration) throws {
         try validateDisplayName(configuration.localResource.displayName)
         try validateLimits(configuration)
-        let models = configuration.localModels.map(\.descriptor.reference)
+        let models =
+            configuration.localModels.map(\.descriptor.reference)
+            + configuration.modelStoreModels.map(\.key)
         try validateUniqueModels(models)
         try validateRuntime(configuration)
+        try validateModelStore(configuration)
         try validateModelTasks(configuration.localModelTasks, models: models)
         try validateDefaults(
             configuration.defaultModels,
@@ -50,10 +53,30 @@ extension InferPeer {
     }
 
     private static func validateRuntime(_ configuration: InferPeerConfiguration) throws {
-        guard configuration.localRuntime == nil || configuration.directRuntime == nil else {
+        let configuredRuntimeCount = [
+            configuration.localRuntime != nil,
+            configuration.directRuntime != nil,
+            configuration.modelStore != nil
+                && configuration.modelStoreDeviceProfile != nil,
+        ].filter { $0 }.count
+        guard configuredRuntimeCount <= 1 else {
             throw InferPeerError(
                 code: .invalidRequest,
                 message: "Configure either the legacy text backend or the v2 direct runtime",
+                isRetryable: false
+            )
+        }
+    }
+
+    private static func validateModelStore(_ configuration: InferPeerConfiguration) throws {
+        guard
+            configuration.modelStoreModels.isEmpty
+                || (configuration.modelStore != nil
+                    && configuration.modelStoreDeviceProfile != nil)
+        else {
+            throw InferPeerError(
+                code: .invalidRequest,
+                message: "Package-managed models require a model store and device profile",
                 isRetryable: false
             )
         }
@@ -91,15 +114,17 @@ extension InferPeer {
 
     static func localSnapshot(
         _ configuration: InferPeerConfiguration,
-        artifacts: [ModelKey: LocalModelArtifact]
+        models: [ModelKey: LocalExecutionModel]
     ) -> ResourceSnapshot {
         let runtimeConfigured =
             configuration.directRuntime != nil || configuration.localRuntime != nil
+            || (configuration.modelStore != nil
+                && configuration.modelStoreDeviceProfile != nil)
         let tasks =
             runtimeConfigured
             ? Set(configuration.localModelTasks.values.flatMap { $0 }) : []
         let executionAvailable = runtimeConfigured && !tasks.isEmpty
-        let models = artifacts.keys
+        let summaries = models.keys
             .map { key in
                 ModelSummary(
                     key: key,
@@ -116,7 +141,7 @@ extension InferPeer {
             connection: .connected,
             execution: executionAvailable ? .available : .unavailable,
             capabilities: CapabilitySnapshot(supportedTasks: tasks),
-            models: models,
+            models: summaries,
             telemetry: configuration.localResource.telemetry,
             revision: 1
         )

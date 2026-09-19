@@ -24,6 +24,7 @@ public actor DirectGRPCSessionManager: ResourceSessionManaging {
         let terminalEvent: InferPeer_V2_RunEvent?
         let grace: Duration
         let state: DirectRemoteRunState
+        let attachmentReceipts: [String]
     }
 
     let credentialStore: any DirectResourceCredentialStoring
@@ -87,6 +88,25 @@ public actor DirectGRPCSessionManager: ResourceSessionManaging {
         return snapshot
     }
 
+    /// Reopens every durable pairing and fetches a fresh authenticated resource snapshot.
+    public func reconnectPairedResources() async -> [ResourceSnapshot] {
+        guard let resourceIDs = try? await credentialStore.resourceIDs() else { return [] }
+        var snapshots: [ResourceSnapshot] = []
+        for resourceID in resourceIDs {
+            do {
+                let session = try await session(for: resourceID)
+                if let snapshot = try await session.connection.resourceSnapshot(knownRevision: 0),
+                    snapshot.id == resourceID
+                {
+                    snapshots.append(snapshot)
+                }
+            } catch {
+                sessions[resourceID] = nil
+            }
+        }
+        return snapshots
+    }
+
     /// Closes one exact resource session without changing its pairing.
     public func disconnect(_ resourceID: ResourceID) async {
         guard let session = sessions.removeValue(forKey: resourceID) else { return }
@@ -121,10 +141,11 @@ public actor DirectGRPCSessionManager: ResourceSessionManaging {
         options: RunOptions
     ) async throws -> RemoteRunExecution {
         let requestID = try requireRequestID(options)
-        let encoded = try requireEncoded(query, options: options)
+        let preparedQuery = try await prepareAssets(in: query, resourceID: resourceID)
+        let encoded = try requireEncoded(preparedQuery, options: options)
         let admission = try await admit(
             requestID: requestID,
-            query: query,
+            query: preparedQuery,
             encoded: encoded,
             resourceID: resourceID,
             options: options
@@ -133,7 +154,8 @@ public actor DirectGRPCSessionManager: ResourceSessionManaging {
             requestID: requestID,
             resourceID: resourceID,
             admission: admission,
-            disconnectPolicy: options.disconnectPolicy
+            disconnectPolicy: options.disconnectPolicy,
+            attachmentReceipts: encoded.attachmentReceipts
         )
     }
 

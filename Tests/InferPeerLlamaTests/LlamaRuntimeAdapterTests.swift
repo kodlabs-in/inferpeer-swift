@@ -27,9 +27,10 @@ struct LlamaRuntimeAdapterTests {
         )
 
         #expect(
-            support == .unsupported(
-                reasons: [.adapterRejected("runtime identifier is not llama.cpp")]
-            )
+            support
+                == .unsupported(
+                    reasons: [.adapterRejected("runtime identifier is not llama.cpp")]
+                )
         )
     }
 

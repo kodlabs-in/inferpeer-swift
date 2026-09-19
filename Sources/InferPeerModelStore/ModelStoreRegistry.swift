@@ -39,9 +39,13 @@ enum ModelStoreRegistryError: Error, Equatable, Sendable {
 /// GRDB-backed metadata registry. Model bytes always stay in the filesystem.
 actor ModelStoreRegistry {
     let database: DatabasePool
+    let installedDirectory: URL
 
-    init(databaseURL: URL) throws {
-        guard databaseURL.isFileURL else { throw ModelStoreRegistryError.databaseFailure }
+    init(databaseURL: URL, installedDirectory: URL) throws {
+        guard databaseURL.isFileURL, installedDirectory.isFileURL else {
+            throw ModelStoreRegistryError.databaseFailure
+        }
+        self.installedDirectory = installedDirectory.standardizedFileURL
         do {
             try FileManager.default.createDirectory(
                 at: databaseURL.deletingLastPathComponent(),
@@ -181,27 +185,42 @@ actor ModelStoreRegistry {
     }
 
     func installedModels() async throws -> [InstalledModel] {
+        try await models(includingCorrupt: false)
+    }
+
+    func reconcilableModels() async throws -> [InstalledModel] {
+        try await models(includingCorrupt: true)
+    }
+
+    private func models(includingCorrupt: Bool) async throws -> [InstalledModel] {
+        var states = [
+            ModelInstallationState.installed,
+            ModelInstallationState.loading,
+            ModelInstallationState.ready,
+        ]
+        if includingCorrupt { states.append(.corrupt) }
+        let placeholders = states.map { _ in "?" }.joined(separator: ", ")
+        let stateValues = states.map(\.rawValue)
+        let installedDirectory = installedDirectory
         do {
             return try await database.read { database in
                 let rows = try Row.fetchAll(
                     database,
                     sql: """
-                        SELECT v.model_id, i.manifest_revision, v.manifest_payload,
-                               i.directory_path, v.installed_bytes
+                        SELECT v.model_id, v.catalog_version, i.manifest_revision,
+                               v.manifest_payload, v.installed_bytes
                         FROM installations i
                         JOIN model_versions v
                           ON v.model_id = i.model_id
                          AND v.catalog_version = i.catalog_version
-                        WHERE i.state IN (?, ?, ?)
+                        WHERE i.state IN (\(placeholders))
                         ORDER BY v.model_id, v.catalog_version
                         """,
-                    arguments: [
-                        ModelInstallationState.installed.rawValue,
-                        ModelInstallationState.loading.rawValue,
-                        ModelInstallationState.ready.rawValue,
-                    ]
+                    arguments: StatementArguments(stateValues)
                 )
-                return try rows.map(Self.installedModel)
+                return try rows.map {
+                    try Self.installedModel($0, installedDirectory: installedDirectory)
+                }
             }
         } catch let error as ModelStoreRegistryError {
             throw error

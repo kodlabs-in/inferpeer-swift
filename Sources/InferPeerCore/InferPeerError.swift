@@ -1,3 +1,4 @@
+import Foundation
 import InferPeerInference
 import InferPeerProtocol
 
@@ -280,4 +281,9 @@ public struct InferPeerError: Error, Equatable, Sendable {
             .internal
         }
     }
+}
+
+extension InferPeerError: LocalizedError {
+    /// A payload-safe diagnostic suitable for host application status UI.
+    public var errorDescription: String? { message }
 }

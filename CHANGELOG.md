@@ -1,49 +1,31 @@
 # Changelog
 
-All notable changes to InferPeer will be documented here.
+All notable changes to InferPeer are documented here.
 
-## Unreleased
+## 1.0.0 - 2026-09-19
 
-- Added the experimental v2 direct-resource facade with `discovery()`, `resources()`,
-  `run(_:resourceId:options:)`, pairing, exposure, explicit model preparation, and deterministic
-  shutdown. Local execution uses an in-process path and remote execution never falls back to a
-  different resource.
-- Added typed text, image-understanding, transcription, and speech-synthesis queries and results,
-  stable v2 errors, bounded run/resource streams, queueing, cancellation, timeouts, output
-  backpressure, memory admission, and bounded warm-model retention.
-- Added the isolated `inferpeer.v2` Protobuf/gRPC surface, SQLite direct-request metadata and
-  restart interruption, and owner-scoped resumable asset uploads with exact offsets and SHA-256
-  verification.
-- Added concrete generated v2 client/server adapters for all 13 RPCs, bounded streaming bridges,
-  strict wire mappings, direct Bonjour metadata, authenticated fixed-endpoint session recovery,
-  lost-ack reconciliation, and bounded same-process output replay.
-- Added the adapter-neutral multimodal runtime contract, verified content-derived model manifests,
-  lifecycle/thermal/battery admission policy, and revisioned resource telemetry publication.
-- Added `InferPeerModelStore` with pinned Ed25519 catalogs, connected-resource compatibility and
-  recommendation explanations, resumable package-owned HTTPS downloads, mandatory-manifest
-  imports, atomic hash-verified installation, GRDB lifecycle metadata, adapter sessions, startup
-  reconciliation, and safe removal.
-- Added v2 state, protocol, facade, query, storage, race, and failure-path tests. InferPeer Sandbox
-  now exercises the direct `.local` text and multimodal facade paths on macOS and iOS instead of a
-  RunLocalAI test app.
+- Replaced implicit cluster routing with a generic direct-resource API: discover, pair, inspect,
+  and run on one exact local or remote resource with no forwarding or fallback.
+- Added the `inferpeer.v2` Protobuf/gRPC surface, authenticated TLS sessions, certificate pinning,
+  one-time invitations, durable credentials, reconnect, bounded streams, cancellation, timeout,
+  same-process replay, and owner-scoped resumable image assets.
+- Added live immutable resource snapshots with explicit connectivity, execution availability,
+  model readiness, telemetry freshness, and five-second host heartbeats.
+- Added package-owned model acquisition: a pinned Ed25519 starter catalog, immutable HTTPS files,
+  resumable staging, exact size/SHA-256 verification, atomic registration, import, lifecycle, and
+  container-path recovery after application updates.
+- Added replaceable runtime adapters for native llama.cpp/libmtmd and MLX. The 1.0 signed catalog
+  ships stable Qwen3 0.6B MLX text and SmolVLM2 500M Q8 still-image entries plus a beta native
+  Qwen3 Q8 text entry.
+- Added deterministic tests for direct routing, transport mapping, pairing and authorization,
+  model-store recovery, corrupt content, restart behavior, lifecycle admission, and text/vision
+  task boundaries.
+- Preserved existing public cluster and audio-facing types for source compatibility. Speech/audio
+  are not part of the 1.0 catalog, test apps, or support claim.
 
 ## 0.1.0 - 2026-09-18
 
-- Added the ten-library Swift package architecture and versioned Protobuf protocol.
+- Added the original ten-library Swift package architecture and versioned Protobuf protocol.
 - Added durable caller outbox, coordinator jobs, replay cursors, queue limits, retention tombstones,
-  and conversation revision ordering.
-- Added local and remote execution, status-based scheduling, leases, retries, cancellation, and
-  typed command rejection.
-- Added mutually authenticated gRPC transport, role-scoped trust, single-use pairing, Bonjour
-  discovery, and Wi-Fi-only endpoint/socket policy.
-- Added the opt-in MLX backend, content-free telemetry, strict formatting/linting, CI, DocC, and an
-  independent caller-only consumer fixture.
-- Replaced overflow-prone transport buffering with bounded backpressure, ordered delivery, and a
-  reserved control slot so text deltas cannot starve cancellation, lease, or heartbeat traffic.
-- Added host-driven coordinator-local worker status refresh for foreground/background eligibility.
-- Improved Wi-Fi path enforcement by ignoring pre-establishment snapshots and revalidating a
-  transient disallowed update before closing established transport resources.
-- Added stable, named gRPC error descriptions for host diagnostics.
-- Expanded physical-device evidence across Mac, iPhone, and iPad for real MLX inference, mobile
-  coordinators, retries, replay, lifecycle rejoin, failure policy, and operational metrics.
-- Adopted Apache License 2.0 and completed the resolved dependency/model licence inventory.
+  conversation ordering, authenticated gRPC transport, MLX execution, telemetry, and CI gates.
+- Adopted Apache License 2.0 and recorded resolved dependency/model license notices.

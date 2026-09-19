@@ -81,7 +81,8 @@ extension DirectGRPCSessionManager {
         requestID: RequestID,
         resourceID: ResourceID,
         admission: Admission,
-        disconnectPolicy: RunDisconnectPolicy
+        disconnectPolicy: RunDisconnectPolicy,
+        attachmentReceipts: [String] = []
     ) -> RemoteRunExecution {
         let state = DirectRemoteRunState(
             initialStatus: admission.status,
@@ -93,7 +94,8 @@ extension DirectGRPCSessionManager {
             expectedIncarnation: admission.incarnation,
             terminalEvent: admission.terminalEvent,
             grace: disconnectPolicy.grace,
-            state: state
+            state: state,
+            attachmentReceipts: attachmentReceipts
         )
         Task { await watch(context) }
         return RemoteRunExecution(
@@ -109,6 +111,14 @@ extension DirectGRPCSessionManager {
     }
 
     func watch(_ context: WatchContext) async {
+        defer {
+            Task {
+                await releaseAssets(
+                    context.attachmentReceipts,
+                    resourceID: context.resourceID
+                )
+            }
+        }
         if let terminalEvent = context.terminalEvent {
             await applyTerminalReplacement(terminalEvent, context: context)
             return

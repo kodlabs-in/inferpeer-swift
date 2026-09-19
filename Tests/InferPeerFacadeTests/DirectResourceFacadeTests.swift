@@ -223,6 +223,32 @@ struct DirectResourceFacadeTests {
         #expect(await sessions.forgottenResources() == [invitation.resourceID])
     }
 
+    @Test("Remembered pairings reconnect into the public resource registry")
+    func reconnectsRememberedResources() async throws {
+        let sessions = DirectFakeSessionManager()
+        let fixture = try DirectResourceFixture(sessionManager: sessions)
+        let resourceID = ResourceID(rawValue: "remembered-resource")
+        let snapshot = ResourceSnapshot(
+            id: resourceID,
+            displayName: "Remembered Mac",
+            platform: PlatformDescriptor(
+                operatingSystem: .macOS,
+                operatingSystemVersion: "test"
+            ),
+            connection: .connected,
+            execution: .available,
+            capabilities: CapabilitySnapshot(supportedTasks: [.textGeneration]),
+            models: [],
+            revision: 1
+        )
+        await sessions.setReconnectSnapshots([snapshot])
+
+        let reconnected = await fixture.facade.reconnectPairedResources()
+
+        #expect(reconnected.map(\.id) == [resourceID])
+        #expect(await fixture.facade.resources().contains { $0.id == resourceID })
+    }
+
     @Test("Expired pairing data is rejected before opening a session")
     func expiredInvitationFailsClosed() async throws {
         let sessions = DirectFakeSessionManager()
