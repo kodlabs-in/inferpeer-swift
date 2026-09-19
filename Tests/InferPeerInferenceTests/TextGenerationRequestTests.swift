@@ -68,17 +68,22 @@ struct TextGenerationRequestTests {
         }
     }
 
-    @Test("Generation output defaults to and is capped at 512 tokens")
+    @Test("Generation output defaults to 512 and is capped by the v2 protocol limit")
     func validatesMaximumOutputTokenLimit() throws {
         let defaultOptions = try GenerationOptions(
             modelRequirement: .exact(try makeModelReference())
         )
 
         #expect(defaultOptions.maximumOutputTokens == 512)
+        let maximumOptions = try GenerationOptions(
+            modelRequirement: .exact(makeModelReference()),
+            maximumOutputTokens: 16_384
+        )
+        #expect(maximumOptions.maximumOutputTokens == 16_384)
         #expect(throws: InferenceValidationError.invalidMaximumOutputTokens) {
             try GenerationOptions(
                 modelRequirement: .exact(makeModelReference()),
-                maximumOutputTokens: 513
+                maximumOutputTokens: 16_385
             )
         }
     }

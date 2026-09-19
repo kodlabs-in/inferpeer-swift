@@ -61,7 +61,7 @@ public struct ModelMetadata: Hashable, Sendable {
 }
 
 /// The SHA-256 digest of a model artifact's verified contents.
-public struct ModelContentDigest: Hashable, Sendable {
+public struct ModelContentDigest: Codable, Hashable, Sendable {
     /// The required length of a SHA-256 digest.
     public static let byteCount = 32
 

@@ -44,6 +44,13 @@ The independent `Fixtures/CallerOnlyConsumer` package is built by `make check` a
 only the `InferPeer` product and provides evidence that a downstream caller target compiles without
 linking the MLX adapter.
 
+`InferPeerModelStore` is now an eleventh opt-in library product. Deterministic tests cover pinned
+catalog signatures and rollback protection, immutable model versions, connected-resource
+recommendations, HTTPS/resume behavior, directory/archive import boundaries, complete-tree hashes,
+atomic registration, lifecycle status, restart reconciliation, corrupt-installation repair, and
+adapter-driven offline execution. These tests use small fixture bytes and mock adapters; they do
+not certify the PRD's proposed Qwen, SmolVLM2, or WhisperKit artifacts on physical devices.
+
 SwiftPM's API breakage diagnostic compared every library product against commit `068a4f5` and found
 no breaking changes. The versioned Protobuf schemas and committed generated Swift/gRPC sources are
 unchanged from that baseline.
@@ -96,15 +103,15 @@ Both mobile devices hosted inbound coordinator traffic on the current LAN. The s
 the active Wi-Fi interface instead of assuming `en0`, and transport path enforcement revalidates a
 disallowed update after a one-second grace period before closing an established listener.
 
-## Remaining release gates
+## Release status
 
 The release owner explicitly waived router-disconnect and packet-capture validation for `0.1.0` on
-2026-09-18. Source inspection found no package or sandbox runtime HTTP/download path, and the MLX
-adapter accepts only a local directory URL, but that is not equivalent to an offline packet-capture
-pass and no such claim is made here.
+2026-09-18. That release predates `InferPeerModelStore`. The current unreleased package has an
+HTTPS-only signed-catalog and model-download path; it still makes no packet-capture claim. The MLX
+backend itself continues to accept only a verified local directory URL.
 
-The clean-checkout CI gate passed using the pinned Xcode 26.6/Swift 6.3.3 environment. The remaining
-publication action is creating and pushing the `0.1.0` tag.
+The clean-checkout CI gate passed using the pinned Xcode 26.6/Swift 6.3.3 environment. The `0.1.0`
+tag has been created and pushed.
 
 The package repository intentionally contains no production or sandbox application. Physical-device
 evidence comes from the separate sibling sandbox host. Track every remaining gate in

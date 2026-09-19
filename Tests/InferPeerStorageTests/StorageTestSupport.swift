@@ -64,6 +64,29 @@ struct StorageTestDatabase {
         )
     }
 
+    func makeDirectRequestStore(
+        configuration: SQLiteStorageConfiguration = .standard,
+        date: Date = Date(timeIntervalSince1970: 1_000)
+    ) throws -> SQLiteDirectRequestStore {
+        try SQLiteDirectRequestStore(
+            databaseURL: databaseURL,
+            configuration: configuration,
+            dateProvider: FixedStorageDateProvider(date: date)
+        )
+    }
+
+    func makeDirectAssetStore(
+        configuration: SQLiteStorageConfiguration = .standard,
+        date: Date = Date(timeIntervalSince1970: 1_000)
+    ) throws -> SQLiteDirectAssetStore {
+        try SQLiteDirectAssetStore(
+            databaseURL: databaseURL,
+            assetDirectoryURL: directoryURL.appendingPathComponent("assets", isDirectory: true),
+            configuration: configuration,
+            dateProvider: FixedStorageDateProvider(date: date)
+        )
+    }
+
     func remove() {
         try? FileManager.default.removeItem(at: directoryURL)
     }

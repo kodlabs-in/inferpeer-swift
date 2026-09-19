@@ -16,6 +16,9 @@ device identifiers in a public issue.
 - Request ownership and allowed-worker policy are checked before replay or execution.
 - Request and event sizes, stream buffers, queue depth, database content, attempts, leases, and
   deadlines are bounded.
+- Model catalogs require a pinned Ed25519 signature, immutable revisions, and HTTPS sources. Every
+  declared model file is size- and SHA-256-verified before atomic installation; imports reject path
+  escape, symlinks, undeclared files, and unsupported payload types.
 
 ## Host responsibilities
 
@@ -32,5 +35,6 @@ the readable request content it executes.
 
 Automated tests cover certificate identity checks, role-scoped trust, invitation expiry and atomic
 single use, revocation, LAN endpoint policy, bounded messages, ownership, and replay authorization.
-Packet capture, physical-device lifecycle behavior, Keychain entitlement behavior, and host backup
-configuration remain manual release gates for the sandbox app.
+Packet-capture validation was explicitly waived for `0.1.0` and has not been verified. Physical-device
+lifecycle behavior, Keychain entitlement behavior, and host backup configuration remain manual
+validation responsibilities for the sandbox app.

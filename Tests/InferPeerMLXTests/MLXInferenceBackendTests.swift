@@ -81,13 +81,14 @@ struct MLXInferenceBackendTests {
         try await backend.loadModel(makeArtifact())
         let first = try makeExecution(attempt: "attempt-1")
         let second = try makeExecution(attempt: "attempt-2")
-        _ = try await backend.generate(first)
+        let firstStream = try await backend.generate(first)
 
         await #expect(throws: InferenceBackendError.resourceExhausted) {
             _ = try await backend.generate(second)
         }
 
         await backend.cancel(attemptID: first.attemptID)
+        _ = firstStream
     }
 
     @Test("Cancellation terminates the matching stream")

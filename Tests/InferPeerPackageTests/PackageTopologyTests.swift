@@ -4,13 +4,14 @@
 @testable import InferPeerGRPC
 @testable import InferPeerInference
 @testable import InferPeerMLX
+@testable import InferPeerModelStore
 @testable import InferPeerProtocol
 @testable import InferPeerSecurity
 @testable import InferPeerStorage
 @testable import InferPeerTelemetry
 import Testing
 
-@Test("All ten library modules are importable")
+@Test("All eleven library modules are importable")
 func allLibraryModulesAreImportable() {
     let modules: [Any.Type] = [
         InferPeerModule.self,
@@ -22,8 +23,9 @@ func allLibraryModulesAreImportable() {
         InferPeerDiscoveryModule.self,
         InferPeerSecurityModule.self,
         InferPeerTelemetryModule.self,
+        RuntimeID.self,
         InferPeerMLXModule.self,
     ]
 
-    #expect(modules.count == 10)
+    #expect(modules.count == 11)
 }

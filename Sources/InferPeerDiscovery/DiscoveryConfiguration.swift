@@ -111,4 +111,7 @@ public enum PeerDiscoveryError: Error, Equatable, Sendable {
 
     /// An advertiser was started more than once.
     case advertisementAlreadyActive
+
+    /// Bonjour TXT metadata was missing, oversized, malformed, or incompatible.
+    case invalidTXTRecord
 }

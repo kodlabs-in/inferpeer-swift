@@ -1,4 +1,52 @@
-# Experimental release checklist
+# Release checklist
+
+## Experimental 0.2.0 direct-resource release
+
+An unchecked item is a release blocker or external evidence requirement, not an implied capability.
+
+### Automated package evidence
+
+- [x] The direct facade exposes discovery, immutable resource snapshots, fixed-destination runs,
+      pairing, exposure, preparation, disconnect/forget, and deterministic stop contracts.
+- [x] `.local` uses the in-process executor and cannot fall back to a remote resource.
+- [x] Typed task schemas, run events/results, stable errors, v2 Protobuf messages, and all 13 direct
+      RPC service methods are generated and Buf-clean.
+- [x] Deterministic tests cover resource revisions, local/remote routing boundaries, queueing,
+      cancellation, timeouts, memory admission, model lifecycle, output backpressure, request-ID
+      conflicts, terminal races, restart interruption, resumable assets, ownership, and corruption.
+- [x] Strict formatting, SwiftLint complexity/length rules, warnings-as-errors package tests, and
+      the independent engine-optional consumer build pass.
+- [x] InferPeer Sandbox builds for macOS and iOS Simulator and uses the direct local facade.
+- [x] Generated v2 gRPC client/server adapters, Bonjour TXT negotiation, authenticated
+      fixed-endpoint session persistence, bounded reconnect/replay, and lost-ACK reconciliation
+      have deterministic integration tests.
+- [x] Verified model manifests reject path escape, symlinks, undeclared/missing/corrupt content and
+      register atomically without a hidden download path.
+- [x] Lifecycle/thermal/battery admission and revisioned telemetry/freshness policies have
+      deterministic clock-driven tests and preserve unknown values.
+- [x] `InferPeerModelStore` verifies pinned signed catalogs, evaluates actual connected-resource
+      memory/storage/OS/chip/adapter facts, owns resumable downloads and manifest imports, commits
+      atomic verified installations, reconciles corruption at launch, and safely repairs/removes
+      package-managed files with deterministic tests.
+- [ ] Live Apple TLS listener/client composition, real certificate-pin rejection, Keychain-backed
+      v2 session wiring, and reconnect/replay are exercised through InferPeer Sandbox.
+- [ ] The reference llama.cpp text/VLM, WhisperKit ASR, and separate TTS adapters are reproducibly
+      built, licensed, registered, and covered by end-to-end tests.
+
+### Physical-device and release evidence
+
+- [ ] Record the exact seven-device hardware/OS/RAM inventory and approved text/VLM/ASR/TTS model
+      identities, hashes, formats, and licenses.
+- [ ] Demonstrate real iPhone-to-Mac direct TLS gRPC, valid-pin success, wrong-pin rejection,
+      local-route enforcement, and an offline `.local` request with no loopback traffic.
+- [ ] Complete all 42 directed text smoke pairs, one-to-many no-forwarding audit, modality support
+      matrix, owner isolation, malformed-media, storage-full, thermal, memory, and lifecycle cases.
+- [ ] Measure the PRD's discovery, throughput, first-output, cancellation, idle telemetry, memory,
+      energy, and 30-minute thermal-soak targets in release builds on physical devices.
+- [ ] Publish the exact compatibility matrix, adapter build instructions, integration keys,
+      benchmark records, and any measured limitations before tagging `0.2.0`.
+
+## Historical 0.1.0 cluster release
 
 Do not tag `0.1.0` until every automated and manual demo gate below has evidence. An unchecked item
 is unverified, not an implied capability.

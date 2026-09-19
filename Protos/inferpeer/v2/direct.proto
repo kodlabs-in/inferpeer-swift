@@ -1,0 +1,394 @@
+syntax = "proto3";
+
+package inferpeer.v2;
+
+option swift_prefix = "InferPeer_V2_";
+
+// Task identifies one complete inference operation.
+enum Task {
+  TASK_UNSPECIFIED = 0;
+  TASK_TEXT = 1;
+  TASK_VISION = 2;
+  TASK_TRANSCRIBE = 3;
+  TASK_SYNTHESIZE_SPEECH = 4;
+}
+
+// ErrorCode is the stable direct-resource error vocabulary.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_LOCAL_NETWORK_DENIED = 1;
+  ERROR_CODE_DISCOVERY_UNAVAILABLE = 2;
+  ERROR_CODE_NOT_PAIRED = 3;
+  ERROR_CODE_AUTHENTICATION_FAILED = 4;
+  ERROR_CODE_PERMISSION_DENIED = 5;
+  ERROR_CODE_PROTOCOL_MISMATCH = 6;
+  ERROR_CODE_UNSUPPORTED_TASK = 7;
+  ERROR_CODE_UNSUPPORTED_OPTION = 8;
+  ERROR_CODE_RESOURCE_UNAVAILABLE = 9;
+  ERROR_CODE_BACKGROUND_RESTRICTED = 10;
+  ERROR_CODE_THERMAL_LIMITED = 11;
+  ERROR_CODE_BATTERY_POLICY = 12;
+  ERROR_CODE_MODEL_NOT_INSTALLED = 13;
+  ERROR_CODE_MODEL_INCOMPATIBLE = 14;
+  ERROR_CODE_MODEL_CORRUPT = 15;
+  ERROR_CODE_MODEL_LOAD_FAILED = 16;
+  ERROR_CODE_INSUFFICIENT_MEMORY = 17;
+  ERROR_CODE_CONTEXT_TOO_LARGE = 18;
+  ERROR_CODE_INPUT_TOO_LARGE = 19;
+  ERROR_CODE_QUEUE_FULL = 20;
+  ERROR_CODE_ASSET_INVALID = 21;
+  ERROR_CODE_ASSET_EXPIRED = 22;
+  ERROR_CODE_UPLOAD_OFFSET_MISMATCH = 23;
+  ERROR_CODE_REQUEST_CONFLICT = 24;
+  ERROR_CODE_DEADLINE_EXCEEDED = 25;
+  ERROR_CODE_CANCELLED = 26;
+  ERROR_CODE_INTERRUPTED = 27;
+  ERROR_CODE_CONNECTION_LOST = 28;
+  ERROR_CODE_OUTCOME_UNKNOWN = 29;
+  ERROR_CODE_REPLAY_EXPIRED = 30;
+  ERROR_CODE_HISTORY_EXPIRED = 31;
+  ERROR_CODE_RESULT_EXPIRED = 32;
+  ERROR_CODE_OUTPUT_BACKPRESSURE = 33;
+  ERROR_CODE_STORAGE_FULL = 34;
+  ERROR_CODE_INTERNAL = 35;
+  ERROR_CODE_INVALID_REQUEST = 36;
+  ERROR_CODE_RESOURCE_EXHAUSTED = 37;
+}
+
+// ConnectionState describes authenticated session state.
+enum ConnectionState {
+  CONNECTION_STATE_UNSPECIFIED = 0;
+  CONNECTION_STATE_CONNECTING = 1;
+  CONNECTION_STATE_AUTHENTICATING = 2;
+  CONNECTION_STATE_CONNECTED = 3;
+  CONNECTION_STATE_RECONNECTING = 4;
+  CONNECTION_STATE_DISCONNECTED = 5;
+  CONNECTION_STATE_BLOCKED = 6;
+}
+
+// ExecutionAvailability describes current admission eligibility.
+enum ExecutionAvailability {
+  EXECUTION_AVAILABILITY_UNSPECIFIED = 0;
+  EXECUTION_AVAILABILITY_AVAILABLE = 1;
+  EXECUTION_AVAILABILITY_BUSY = 2;
+  EXECUTION_AVAILABILITY_PAUSED_BY_HOST = 3;
+  EXECUTION_AVAILABILITY_THERMAL_LIMITED = 4;
+  EXECUTION_AVAILABILITY_MEMORY_LIMITED = 5;
+  EXECUTION_AVAILABILITY_BACKGROUND_RESTRICTED = 6;
+  EXECUTION_AVAILABILITY_UNAVAILABLE = 7;
+}
+
+// ModelReadiness describes one exact artifact's preparation state.
+enum ModelReadiness {
+  MODEL_READINESS_UNSPECIFIED = 0;
+  MODEL_READINESS_REGISTERED = 1;
+  MODEL_READINESS_PREPARING = 2;
+  MODEL_READINESS_READY = 3;
+  MODEL_READINESS_UNLOADING = 4;
+  MODEL_READINESS_FAILED = 5;
+}
+
+// RunState is the durable state of one admitted request.
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_ACCEPTED = 1;
+  RUN_STATE_QUEUED = 2;
+  RUN_STATE_PREPARING = 3;
+  RUN_STATE_RUNNING = 4;
+  RUN_STATE_CANCEL_REQUESTED = 5;
+  RUN_STATE_COMPLETED = 6;
+  RUN_STATE_FAILED = 7;
+  RUN_STATE_CANCELLED = 8;
+  RUN_STATE_EXPIRED = 9;
+  RUN_STATE_INTERRUPTED = 10;
+}
+
+// ErrorDetail contains payload-safe failure information.
+message ErrorDetail {
+  ErrorCode code = 1;
+  string safe_message = 2;
+  bool retryable = 3;
+  optional uint64 retry_delay_milliseconds = 4;
+  reserved 5 to 9;
+}
+
+// ModelKey identifies one immutable verified artifact.
+message ModelKey {
+  string model_id = 1;
+  string upstream_revision = 2;
+  bytes manifest_sha256 = 3;
+  string runtime = 4;
+  reserved 5 to 9;
+}
+
+// ModelSummary advertises an exact artifact and its current readiness.
+message ModelSummary {
+  ModelKey key = 1;
+  ModelReadiness readiness = 2;
+  repeated Task supported_tasks = 3;
+  reserved 4 to 9;
+}
+
+// TelemetryMeasurement never substitutes zero for an unavailable value.
+message TelemetryMeasurement {
+  string name = 1;
+  optional double value = 2;
+  string unit = 3;
+  string scope = 4;
+  string quality = 5;
+  optional uint64 sample_age_milliseconds = 6;
+  optional string unavailable_reason = 7;
+  reserved 8 to 9;
+}
+
+// ResourceSnapshot is one complete immutable resource revision.
+message ResourceSnapshot {
+  string resource_id = 1;
+  string display_name = 2;
+  string operating_system = 3;
+  string operating_system_version = 4;
+  optional string hardware_identifier = 5;
+  ConnectionState connection = 6;
+  ExecutionAvailability execution = 7;
+  repeated Task supported_tasks = 8;
+  repeated ModelSummary models = 9;
+  repeated TelemetryMeasurement telemetry = 10;
+  uint64 revision = 11;
+  reserved 12 to 19;
+}
+
+// ResourceDelta advances exactly one known base revision.
+message ResourceDelta {
+  string resource_id = 1;
+  string incarnation = 2;
+  uint64 base_revision = 3;
+  uint64 revision = 4;
+  ResourceSnapshot changed_snapshot = 5;
+  reserved 6 to 9;
+}
+
+// PairRequest consumes one resource-scoped out-of-band invitation secret.
+message PairRequest {
+  uint32 protocol_major = 1;
+  string invitation_id = 2;
+  bytes invitation_secret = 3;
+  string expected_resource_id = 4;
+  reserved 5 to 9;
+}
+
+// PairResponse returns a unique scoped credential over pinned TLS.
+message PairResponse {
+  string resource_id = 1;
+  bytes credential = 2;
+  ResourceSnapshot snapshot = 3;
+  reserved 4 to 9;
+}
+
+// HelloRequest negotiates direct-protocol support for one paired principal.
+message HelloRequest {
+  uint32 protocol_major = 1;
+  uint32 minimum_minor = 2;
+  uint32 maximum_minor = 3;
+  repeated string optional_features = 4;
+  reserved 5 to 9;
+}
+
+// HelloResponse reports endpoint identity, limits, and current catalog revision.
+message HelloResponse {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  string resource_id = 3;
+  string incarnation = 4;
+  repeated Task supported_tasks = 5;
+  uint64 catalog_revision = 6;
+  uint64 maximum_message_bytes = 7;
+  uint64 maximum_asset_bytes = 8;
+  repeated string optional_features = 9;
+  reserved 10 to 19;
+}
+
+// WatchResourceRequest resumes resource state from a known revision.
+message WatchResourceRequest {
+  uint64 known_revision = 1;
+}
+
+// WatchResourceResponse carries a full state, delta, or heartbeat.
+message WatchResourceResponse {
+  oneof payload {
+    ResourceSnapshot snapshot = 1;
+    ResourceDelta delta = 2;
+    uint64 heartbeat_revision = 3;
+  }
+  reserved 4 to 9;
+}
+
+// AssetDeclaration requests bounded upload admission.
+message AssetDeclaration {
+  string client_asset_id = 1;
+  uint64 byte_count = 2;
+  bytes sha256 = 3;
+  string media_type = 4;
+  reserved 5 to 9;
+}
+
+// PrepareAssetsRequest declares every asset before any bytes are uploaded.
+message PrepareAssetsRequest {
+  repeated AssetDeclaration assets = 1;
+}
+
+// UploadTicket binds an upload to owner, size, hash, and expiry.
+message UploadTicket {
+  string ticket = 1;
+  string client_asset_id = 2;
+  uint64 durable_offset = 3;
+  uint64 expires_unix_milliseconds = 4;
+  reserved 5 to 9;
+}
+
+// PrepareAssetsResponse returns accepted upload tickets.
+message PrepareAssetsResponse {
+  repeated UploadTicket tickets = 1;
+}
+
+// UploadAssetRequest carries one exact byte range.
+message UploadAssetRequest {
+  string ticket = 1;
+  uint64 offset = 2;
+  bytes data = 3;
+  reserved 4 to 9;
+}
+
+// UploadAssetResponse returns an owner-bound verified receipt.
+message UploadAssetResponse {
+  string receipt = 1;
+  uint64 byte_count = 2;
+  bytes sha256 = 3;
+  reserved 4 to 9;
+}
+
+// GetUploadStatusRequest asks for the resource-confirmed durable offset.
+message GetUploadStatusRequest {
+  string ticket = 1;
+}
+
+// GetUploadStatusResponse reports only confirmed durable progress.
+message GetUploadStatusResponse {
+  uint64 durable_offset = 1;
+  bool complete = 2;
+  optional string receipt = 3;
+  reserved 4 to 9;
+}
+
+// ReadAssetRequest authorizes a bounded output range.
+message ReadAssetRequest {
+  string receipt = 1;
+  uint64 offset = 2;
+  optional uint64 length = 3;
+  reserved 4 to 9;
+}
+
+// ReadAssetResponse carries one ordered output range.
+message ReadAssetResponse {
+  uint64 offset = 1;
+  bytes data = 2;
+  bool end_of_asset = 3;
+  reserved 4 to 9;
+}
+
+// PrepareModelRequest selects one exact registered artifact.
+message PrepareModelRequest {
+  ModelKey model = 1;
+  uint64 remaining_timeout_milliseconds = 2;
+  reserved 3 to 9;
+}
+
+// PrepareModelResponse reports bounded preparation progress and one terminal state.
+message PrepareModelResponse {
+  ModelReadiness readiness = 1;
+  optional uint32 progress_per_mille = 2;
+  optional ErrorDetail error = 3;
+  reserved 4 to 9;
+}
+
+// StartRunRequest preserves exact immutable specification bytes for deduplication.
+message StartRunRequest {
+  string request_id = 1;
+  bytes specification_bytes = 2;
+  uint64 remaining_timeout_milliseconds = 3;
+  repeated string attachment_receipts = 4;
+  reserved 5 to 9;
+}
+
+// StartRunResponse confirms durable admission on this exact resource.
+message StartRunResponse {
+  string request_id = 1;
+  ModelKey admitted_model = 2;
+  string runtime = 3;
+  RunState state = 4;
+  optional uint32 queue_position = 5;
+  string incarnation = 6;
+  uint64 first_event_sequence = 7;
+  uint64 original_timeout_milliseconds = 8;
+  reserved 9;
+}
+
+// WatchRunRequest subscribes or acknowledges delivered output sequence.
+message WatchRunRequest {
+  string request_id = 1;
+  oneof operation {
+    uint64 resume_after_sequence = 2;
+    uint64 acknowledge_sequence = 3;
+  }
+  reserved 4 to 9;
+}
+
+// RunEvent is one sequenced progress, output, or terminal event.
+message RunEvent {
+  string request_id = 1;
+  string execution_incarnation = 2;
+  uint64 sequence = 3;
+  string event_type = 4;
+  bytes bounded_payload = 5;
+  optional ErrorDetail error = 6;
+  reserved 7 to 9;
+}
+
+// WatchRunResponse wraps one run event for bidirectional flow control.
+message WatchRunResponse {
+  RunEvent event = 1;
+}
+
+// GetRunRequest reconciles an ambiguous admission or interrupted stream.
+message GetRunRequest {
+  string request_id = 1;
+}
+
+// GetRunResponse reports state and the currently replayable range.
+message GetRunResponse {
+  string request_id = 1;
+  RunState state = 2;
+  uint64 first_available_sequence = 3;
+  uint64 last_available_sequence = 4;
+  optional RunEvent terminal_event = 5;
+  reserved 6 to 9;
+}
+
+// CancelRunRequest idempotently requests cancellation.
+message CancelRunRequest {
+  string request_id = 1;
+}
+
+// CancelRunResponse reports the serialized state after the request.
+message CancelRunResponse {
+  RunState state = 1;
+}
+
+// ReleaseAssetRequest releases one owner-bound asset reference early.
+message ReleaseAssetRequest {
+  string receipt = 1;
+}
+
+// ReleaseAssetResponse confirms idempotent release.
+message ReleaseAssetResponse {
+  bool released = 1;
+}
