@@ -6,6 +6,17 @@ import InferPeerInference
 import InferPeerProtocol
 
 extension DirectResourceHostHandler {
+    static let supportedImageMediaTypes: Set<String> = [
+        "image/heic",
+        "image/jpeg",
+        "image/png",
+    ]
+    private static let imageMagicPrefixes: [String: [UInt8]] = [
+        "image/jpeg": [0xFF, 0xD8, 0xFF],
+        "image/png": [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+    ]
+    private static let heicBrands = ["heic", "heix", "hevc", "hevx", "mif1", "msf1"]
+
     // Service protocol operations remain async even when actor state is sufficient.
     // swiftlint:disable async_without_await
     /// Validates image declarations and creates owner-scoped upload tickets.
@@ -20,10 +31,20 @@ extension DirectResourceHostHandler {
         }
         removeExpiredTickets()
         var seen: Set<String> = []
-        let now = Date()
-        var response = InferPeer_V2_PrepareAssetsResponse()
         for declaration in request.assets {
             try validate(declaration, seen: &seen)
+        }
+        try enforceAssetQuota(for: principal, declarations: request.assets)
+        return makeAssetTickets(for: principal, declarations: request.assets)
+    }
+
+    private func makeAssetTickets(
+        for principal: String,
+        declarations: [InferPeer_V2_AssetDeclaration]
+    ) -> InferPeer_V2_PrepareAssetsResponse {
+        let now = Date()
+        var response = InferPeer_V2_PrepareAssetsResponse()
+        for declaration in declarations {
             let ticket = UUID().uuidString.lowercased()
             let expiresAt = now.addingTimeInterval(10 * 60)
             tickets[ticket] = AssetTicket(
@@ -65,6 +86,10 @@ extension DirectResourceHostHandler {
         }
         let digest = Data(SHA256.hash(data: ticket.data))
         guard digest == ticket.expectedDigest else {
+            tickets[activeTicket] = nil
+            throw InferPeerError(code: .assetInvalid, isRetryable: false)
+        }
+        guard Self.hasValidImageSignature(ticket.data, mediaType: ticket.mediaType) else {
             tickets[activeTicket] = nil
             throw InferPeerError(code: .assetInvalid, isRetryable: false)
         }
@@ -178,10 +203,22 @@ extension DirectResourceHostHandler {
             declaration.byteCount > 0,
             declaration.byteCount <= Self.maximumAssetBytes,
             declaration.sha256.count == 32,
-            declaration.mediaType.hasPrefix("image/")
+            Self.supportedImageMediaTypes.contains(declaration.mediaType)
         else {
             throw InferPeerError(code: .assetInvalid, isRetryable: false)
         }
+    }
+
+    private static func hasValidImageSignature(_ data: Data, mediaType: String) -> Bool {
+        if let prefix = imageMagicPrefixes[mediaType] {
+            return data.starts(with: prefix)
+        }
+        guard mediaType == "image/heic",
+            data.count >= 12,
+            data[4..<8].elementsEqual(Data("ftyp".utf8)),
+            let brand = String(bytes: data[8..<12], encoding: .utf8)
+        else { return false }
+        return heicBrands.contains(brand)
     }
 
     private func assetURL(principal: String, receipt: String) throws -> URL {
@@ -194,6 +231,53 @@ extension DirectResourceHostHandler {
             return directory.appendingPathComponent(receipt, isDirectory: false)
         } catch {
             throw InferPeerError(code: .storageFull, isRetryable: true)
+        }
+    }
+
+    private func enforceAssetQuota(
+        for principal: String,
+        declarations: [InferPeer_V2_AssetDeclaration]
+    ) throws {
+        let requested = try checkedSum(declarations.map(\.byteCount))
+        let principalObjects = tickets.values.lazy
+            .filter { $0.principalID == principal }
+            .count + receipts.values.lazy.filter { $0.principalID == principal }.count
+        let hostObjects = tickets.count + receipts.count
+        let principalBytes = try checkedSum([
+            try checkedSum(
+                tickets.values.lazy
+                    .filter { $0.principalID == principal }
+                    .map(\.expectedBytes)
+            ),
+            try checkedSum(
+                receipts.values.lazy
+                    .filter { $0.principalID == principal }
+                    .map(\.byteCount)
+            ),
+        ])
+        let hostBytes = try checkedSum([
+            try checkedSum(tickets.values.lazy.map(\.expectedBytes)),
+            try checkedSum(receipts.values.lazy.map(\.byteCount)),
+        ])
+        guard principalObjects + declarations.count <= Self.maximumPrincipalAssetObjects,
+            hostObjects + declarations.count <= Self.maximumHostAssetObjects,
+            principalBytes <= Self.maximumPrincipalAssetBytes,
+            hostBytes <= Self.maximumHostAssetBytes,
+            requested <= Self.maximumPrincipalAssetBytes - principalBytes,
+            requested <= Self.maximumHostAssetBytes - hostBytes
+        else {
+            throw InferPeerError(code: .resourceExhausted, isRetryable: true)
+        }
+    }
+
+    private func checkedSum<S: Sequence>(_ values: S) throws -> UInt64
+    where S.Element == UInt64 {
+        try values.reduce(0) { total, value in
+            let addition = total.addingReportingOverflow(value)
+            guard !addition.overflow else {
+                throw InferPeerError(code: .resourceExhausted, isRetryable: true)
+            }
+            return addition.partialValue
         }
     }
 

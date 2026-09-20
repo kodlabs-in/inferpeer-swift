@@ -8,6 +8,12 @@ import InferPeerSecurity
 
 /// Foreground-only v2 resource host backed by the package model store.
 public actor DirectResourceHostHandler: DirectResourceServiceHandling {
+    struct HostedExecution {
+        let query: InferenceQuery
+        let model: InstalledModel
+        let options: RunOptions
+    }
+
     struct RunKey: Hashable, Sendable {
         let principalID: String
         let requestID: RequestID
@@ -33,18 +39,44 @@ public actor DirectResourceHostHandler: DirectResourceServiceHandling {
     struct HostedRun {
         let specification: Data
         let attachmentReceipts: [String]
+        let originalTimeoutMilliseconds: UInt64
         let model: InstalledModel
         var status: RunStatus
         var events: [InferPeer_V2_RunEvent]
         var terminalEvent: InferPeer_V2_RunEvent?
         var watchers: [UUID: DirectRPCStream<InferPeer_V2_WatchRunResponse>.Continuation]
         var task: Task<Void, Never>?
+        var completedAt: Date?
+    }
+
+    struct PendingRunAdmission {
+        let id: UUID
+        let specification: Data
+        let attachmentReceipts: [String]
+        let originalTimeoutMilliseconds: UInt64
+        let task: Task<InferPeer_V2_StartRunResponse, any Error>
+    }
+
+    struct ResourceWatcher {
+        let principalID: String
+        let continuation: DirectRPCStream<InferPeer_V2_WatchResourceResponse>.Continuation
+        let task: Task<Void, Never>
     }
 
     static let supportedTasks: Set<InferenceTask> = [.textGeneration, .imageUnderstanding]
     static let maximumAssetBytes: UInt64 = 32 * 1_024 * 1_024
+    static let maximumPrincipalAssetBytes: UInt64 = 128 * 1_024 * 1_024
+    static let maximumHostAssetBytes: UInt64 = 256 * 1_024 * 1_024
+    static let maximumPrincipalAssetObjects = 32
+    static let maximumHostAssetObjects = 128
     static let maximumReplayEvents = 256
-
+    static let maximumWatchersPerRun = 8
+    static let maximumConcurrentRuns = 8
+    static let maximumRetainedRuns = 256
+    static let maximumRunTimeoutMilliseconds: UInt64 = 15 * 60 * 1_000
+    static let runRetentionInterval: TimeInterval = 10 * 60
+    static let maximumResourceWatchersPerPrincipal = 4
+    static let maximumResourceWatchers = 32
     let resourceID: ResourceID
     let displayName: String
     let platform: PlatformDescriptor
@@ -54,13 +86,15 @@ public actor DirectResourceHostHandler: DirectResourceServiceHandling {
     let accessController: DirectResourceAccessController
     let wireCodec: any DirectResourceWireCoding
     let assetRoot: URL
-    let incarnation: String
+    var incarnation: String
     let resourceHeartbeatInterval: Duration
     var resourceRevision: UInt64 = 1
     var advertisedModels: [ModelSummary]?
     var tickets: [String: AssetTicket] = [:]
     var receipts: [String: AssetReceipt] = [:]
     var runs: [RunKey: HostedRun] = [:]
+    var pendingRunAdmissions: [RunKey: PendingRunAdmission] = [:]
+    var resourceWatchers: [UUID: ResourceWatcher] = [:]
 
     /// Creates a stopped foreground host. The transport owns listener lifecycle.
     public init(
@@ -82,10 +116,8 @@ public actor DirectResourceHostHandler: DirectResourceServiceHandling {
         else {
             throw InferPeerError(code: .invalidRequest, isRetryable: false)
         }
-        try FileManager.default.createDirectory(
-            at: assetRoot,
-            withIntermediateDirectories: true
-        )
+        let assetRoot = assetRoot.standardizedFileURL
+        try resetDirectResourceAssetRoot(assetRoot)
         self.resourceID = resourceID
         self.displayName = displayName
         self.platform = platform
@@ -93,9 +125,35 @@ public actor DirectResourceHostHandler: DirectResourceServiceHandling {
         self.store = store
         self.deviceProfile = deviceProfile
         self.accessController = accessController
-        self.assetRoot = assetRoot.standardizedFileURL
+        self.assetRoot = assetRoot
         self.wireCodec = wireCodec
         self.resourceHeartbeatInterval = resourceHeartbeatInterval
+        incarnation = UUID().uuidString.lowercased()
+    }
+
+    // Cancels active work and clears ephemeral state when sharing is withdrawn.
+    // swiftlint:disable:next async_without_await
+    public func suspend() async {
+        let interruption = InferPeerError(code: .interrupted, isRetryable: true)
+        for key in runs.keys {
+            runs[key]?.task?.cancel()
+            if runs[key]?.status.isHostTerminal == false {
+                try? append(.interrupted(interruption), to: key)
+            }
+        }
+        for receipt in receipts.values {
+            try? FileManager.default.removeItem(at: receipt.url)
+        }
+        pendingRunAdmissions.values.forEach { $0.task.cancel() }
+        resourceWatchers.values.forEach {
+            $0.task.cancel()
+            $0.continuation.finish()
+        }
+        pendingRunAdmissions.removeAll(keepingCapacity: false)
+        resourceWatchers.removeAll(keepingCapacity: false)
+        tickets.removeAll(keepingCapacity: false)
+        receipts.removeAll(keepingCapacity: false)
+        runs.removeAll(keepingCapacity: false)
         incarnation = UUID().uuidString.lowercased()
     }
 
@@ -149,25 +207,6 @@ public actor DirectResourceHostHandler: DirectResourceServiceHandling {
             $0.optionalFeatures = ["asset-upload", "same-process-replay", "watch-run-ack"]
         }
     }
-
-    // Async is required by the generated service protocol.
-    // swiftlint:disable async_without_await
-    /// Streams resource snapshots when models change and bounded idle heartbeats.
-    public func watchResource(
-        _ request: InferPeer_V2_WatchResourceRequest
-    ) async throws -> DirectRPCStream<InferPeer_V2_WatchResourceResponse> {
-        _ = try requirePrincipal()
-        return DirectRPCStream { continuation in
-            let task = Task { [weak self] in
-                await self?.publishResourceUpdates(
-                    after: request.knownRevision,
-                    to: continuation
-                )
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-    // swiftlint:enable async_without_await
 
     /// Loads one already-installed exact model and streams preparation progress.
     public func prepareModel(
@@ -237,5 +276,16 @@ public actor DirectResourceHostHandler: DirectResourceServiceHandling {
         case .unloading: .unloading
         case .failed: .failed
         }
+    }
+}
+
+private func resetDirectResourceAssetRoot(_ assetRoot: URL) throws {
+    let files = FileManager.default
+    try files.createDirectory(at: assetRoot, withIntermediateDirectories: true)
+    for orphan in try files.contentsOfDirectory(
+        at: assetRoot,
+        includingPropertiesForKeys: nil
+    ) {
+        try files.removeItem(at: orphan)
     }
 }

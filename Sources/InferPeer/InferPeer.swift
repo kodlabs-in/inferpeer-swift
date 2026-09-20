@@ -22,6 +22,17 @@ public actor InferPeer {
         let handle: RunHandle
     }
 
+    struct PendingAcceptedRun {
+        let id: UUID
+        let specification: RunSpecification
+        let task: Task<RunHandle, any Error>
+    }
+
+    struct PendingStop {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
     let configuration: InferPeerConfiguration
     let resourcesRegistry: ResourceRegistry
     let localExecutor: LocalResourceExecutor?
@@ -31,7 +42,11 @@ public actor InferPeer {
     /// Package-owned model catalog and lifecycle when configured by the host.
     nonisolated public let modelStore: InferPeerModelStore?
     private var activeExposure: ExposureHandle?
+    private var exposureTask: Task<ExposureHandle, any Error>?
+    private var exposureGeneration = UUID()
+    private var pendingStop: PendingStop?
     var acceptedRuns: [RequestID: AcceptedRun] = [:]
+    var pendingAcceptedRuns: [RequestID: PendingAcceptedRun] = [:]
 
     /// Creates a stopped facade without opening sockets or loading models.
     public init(configuration: InferPeerConfiguration) throws {
@@ -121,6 +136,7 @@ public actor InferPeer {
     public func expose(
         _ configuration: ExposureConfiguration = .default
     ) async throws -> ExposureHandle {
+        await pendingStop?.task.value
         guard configuration.maximumPairings > 0 else {
             throw InferPeerError(
                 code: .invalidRequest,
@@ -141,9 +157,17 @@ public actor InferPeer {
                 isRetryable: false
             )
         }
-        let handle = try await exposure.start(configuration: configuration)
-        activeExposure = handle
-        return handle
+        if let exposureTask {
+            return try await finishExposureStart(
+                exposureTask,
+                generation: exposureGeneration
+            )
+        }
+        let generation = UUID()
+        exposureGeneration = generation
+        let task = Task { try await exposure.start(configuration: configuration) }
+        exposureTask = task
+        return try await finishExposureStart(task, generation: generation)
     }
 
     /// Pairs one exact remote resource after its session manager authenticates the invitation.
@@ -211,11 +235,52 @@ public actor InferPeer {
 
     /// Stops local execution and releases a loaded model when no run is active.
     public func stop() async {
-        await discoveryController?.stop()
-        await activeExposure?.stop()
-        activeExposure = nil
-        await sessionManager?.stop()
-        await localExecutor?.stop()
+        if let pendingStop {
+            await pendingStop.task.value
+            return
+        }
+        pendingAcceptedRuns.values.forEach { $0.task.cancel() }
+        pendingAcceptedRuns.removeAll(keepingCapacity: false)
+        exposureGeneration = UUID()
+        let pendingExposure = exposureTask
+        exposureTask = nil
+        pendingExposure?.cancel()
+        let activeExposure = self.activeExposure
+        self.activeExposure = nil
+        let stopID = UUID()
+        let task = Task {
+            await discoveryController?.stop()
+            if let pendingHandle = try? await pendingExposure?.value {
+                await pendingHandle.stop()
+            }
+            await activeExposure?.stop()
+            await sessionManager?.stop()
+            await localExecutor?.stop()
+        }
+        pendingStop = PendingStop(id: stopID, task: task)
+        await task.value
+        if pendingStop?.id == stopID { pendingStop = nil }
+    }
+
+    private func finishExposureStart(
+        _ task: Task<ExposureHandle, any Error>,
+        generation: UUID
+    ) async throws -> ExposureHandle {
+        do {
+            let handle = try await task.value
+            guard exposureGeneration == generation else {
+                await handle.stop()
+                throw CancellationError()
+            }
+            exposureTask = nil
+            activeExposure = handle
+            return handle
+        } catch {
+            if exposureGeneration == generation {
+                exposureTask = nil
+            }
+            throw error
+        }
     }
 
 }

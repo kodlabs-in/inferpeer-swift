@@ -5,12 +5,6 @@ import InferPeerInference
 import InferPeerModelStore
 import InferPeerProtocol
 
-private struct HostedExecution {
-    let query: InferenceQuery
-    let model: InstalledModel
-    let options: RunOptions
-}
-
 extension DirectResourceHostHandler {
     /// Admits one immutable exact-model request or returns its prior outcome.
     public func startRun(
@@ -26,11 +20,49 @@ extension DirectResourceHostHandler {
         if let existing = runs[key] {
             return try existingResponse(existing, request: request)
         }
+        if let pending = pendingRunAdmissions[key] {
+            try validatePendingAdmission(pending, request: request)
+            return try await pending.task.value
+        }
+        try enforceRunAdmissionLimits(request)
+        let admissionID = UUID()
+        let task = Task {
+            try await self.admitRun(
+                request,
+                requestID: requestID,
+                principal: principal,
+                key: key
+            )
+        }
+        pendingRunAdmissions[key] = PendingRunAdmission(
+            id: admissionID,
+            specification: request.specificationBytes,
+            attachmentReceipts: request.attachmentReceipts,
+            originalTimeoutMilliseconds: request.remainingTimeoutMilliseconds,
+            task: task
+        )
+        do {
+            let response = try await task.value
+            clearPendingAdmission(key, id: admissionID)
+            return response
+        } catch {
+            clearPendingAdmission(key, id: admissionID)
+            throw error
+        }
+    }
+
+    private func admitRun(
+        _ request: InferPeer_V2_StartRunRequest,
+        requestID: RequestID,
+        principal: String,
+        key: RunKey
+    ) async throws -> InferPeer_V2_StartRunResponse {
         let execution = try await hostedExecution(
             request,
             requestID: requestID,
             principal: principal
         )
+        try Task.checkCancellation()
         registerRun(request, execution: execution, key: key)
         try append(.accepted(model: execution.model.key), to: key)
         let task = Task { [weak self] in
@@ -43,65 +75,11 @@ extension DirectResourceHostHandler {
             )
         }
         runs[key]?.task = task
-        return try response(for: key, originalTimeout: request.remainingTimeoutMilliseconds)
-    }
-
-    /// Streams retained and live events from a client-supplied replay cursor.
-    public func watchRun(
-        _ requests: DirectRPCStream<InferPeer_V2_WatchRunRequest>
-    ) async throws -> DirectRPCStream<InferPeer_V2_WatchRunResponse> {
-        let principal = try requirePrincipal()
-        var iterator = requests.makeAsyncIterator()
-        guard let first = try await iterator.next(),
-            let requestID = RequestID(rawValue: first.requestID),
-            case .resumeAfterSequence(let cursor)? = first.operation
-        else {
-            throw InferPeerError(code: .invalidRequest, isRetryable: false)
-        }
-        let key = RunKey(principalID: principal, requestID: requestID)
-        let subscription = try subscribe(key: key, after: cursor)
-        let controlTask = Task { [weak self] in
-            do {
-                var remaining = iterator
-                while let control = try await remaining.next() {
-                    guard control.requestID == requestID.rawValue,
-                        case .acknowledgeSequence? = control.operation
-                    else {
-                        throw InferPeerError(code: .invalidRequest, isRetryable: false)
-                    }
-                }
-            } catch {
-                await self?.removeWatcher(subscription.id, key: key)
-            }
-        }
-        subscription.continuation.onTermination = { [weak self] _ in
-            controlTask.cancel()
-            Task { await self?.removeWatcher(subscription.id, key: key) }
-        }
-        return subscription.stream
+        return try response(for: key)
     }
 
     // Async is required by the service protocol; actor state is already isolated.
     // swiftlint:disable async_without_await
-    /// Reconciles one owner-scoped run's retained state and sequence range.
-    public func getRun(
-        _ request: InferPeer_V2_GetRunRequest
-    ) async throws -> InferPeer_V2_GetRunResponse {
-        let principal = try requirePrincipal()
-        guard let requestID = RequestID(rawValue: request.requestID),
-            let run = runs[RunKey(principalID: principal, requestID: requestID)]
-        else {
-            throw InferPeerError(code: .outcomeUnknown, isRetryable: true)
-        }
-        return InferPeer_V2_GetRunResponse.with {
-            $0.requestID = request.requestID
-            $0.state = DirectWireMapper.wireRunState(run.status)
-            $0.firstAvailableSequence = run.events.first?.sequence ?? 0
-            $0.lastAvailableSequence = run.events.last?.sequence ?? 0
-            if let terminal = run.terminalEvent { $0.terminalEvent = terminal }
-        }
-    }
-
     /// Requests cancellation without overriding an already committed terminal result.
     public func cancelRun(
         _ request: InferPeer_V2_CancelRunRequest
@@ -170,6 +148,9 @@ extension DirectResourceHostHandler {
                 try append(wireEvent, to: key)
             }
         }
+        guard runs[key]?.status.isHostTerminal == true else {
+            throw InferPeerError(code: .internal, isRetryable: false)
+        }
     }
 
     private func hostedExecution(
@@ -205,20 +186,26 @@ extension DirectResourceHostHandler {
         runs[key] = HostedRun(
             specification: request.specificationBytes,
             attachmentReceipts: request.attachmentReceipts,
+            originalTimeoutMilliseconds: request.remainingTimeoutMilliseconds,
             model: execution.model,
             status: .accepted,
             events: [],
             terminalEvent: nil,
             watchers: [:],
-            task: nil
+            task: nil,
+            completedAt: nil
         )
     }
 
-    private func append(_ event: RunEvent, to key: RunKey) throws {
+    func append(_ event: RunEvent, to key: RunKey) throws {
         guard var run = runs[key] else {
             throw InferPeerError(code: .outcomeUnknown, isRetryable: false)
         }
-        let sequence = (run.events.last?.sequence ?? 0) + 1
+        let nextSequence = (run.events.last?.sequence ?? 0).addingReportingOverflow(1)
+        guard !run.status.isHostTerminal, !nextSequence.overflow else {
+            throw InferPeerError(code: .internal, isRetryable: false)
+        }
+        let sequence = nextSequence.partialValue
         let wire = try wireCodec.encode(
             event,
             requestID: key.requestID,
@@ -230,7 +217,10 @@ extension DirectResourceHostHandler {
             run.events.removeFirst(run.events.count - Self.maximumReplayEvents)
         }
         run.status = event.hostStatus(current: run.status)
-        if event.isHostTerminal { run.terminalEvent = wire }
+        if event.isHostTerminal {
+            run.terminalEvent = wire
+            run.completedAt = Date()
+        }
         let response = InferPeer_V2_WatchRunResponse.with { $0.event = wire }
         for (id, continuation) in run.watchers {
             if case .dropped = continuation.yield(response) {
@@ -245,6 +235,47 @@ extension DirectResourceHostHandler {
             run.watchers.removeAll()
         }
         runs[key] = run
+    }
+
+    private func enforceRunAdmissionLimits(
+        _ request: InferPeer_V2_StartRunRequest
+    ) throws {
+        guard request.remainingTimeoutMilliseconds <= Self.maximumRunTimeoutMilliseconds else {
+            throw InferPeerError(code: .invalidRequest, isRetryable: false)
+        }
+        removeExpiredRuns()
+        let liveKeys = Set(runs.lazy.filter { !$0.value.status.isHostTerminal }.map(\.key))
+            .union(pendingRunAdmissions.keys)
+        guard liveKeys.count < Self.maximumConcurrentRuns else {
+            throw InferPeerError(code: .resourceExhausted, isRetryable: true)
+        }
+        evictOldestTerminalRunForCapacity()
+        let retainedKeys = Set(runs.keys).union(pendingRunAdmissions.keys)
+        guard retainedKeys.count < Self.maximumRetainedRuns else {
+            throw InferPeerError(code: .resourceExhausted, isRetryable: true)
+        }
+    }
+
+    private func removeExpiredRuns() {
+        let cutoff = Date().addingTimeInterval(-Self.runRetentionInterval)
+        runs = runs.filter { _, run in
+            guard let completedAt = run.completedAt else { return true }
+            return completedAt > cutoff
+        }
+    }
+
+    private func evictOldestTerminalRunForCapacity() {
+        let pendingKeys = Set(pendingRunAdmissions.keys)
+        guard Set(runs.keys).union(pendingKeys).count >= Self.maximumRetainedRuns else {
+            return
+        }
+        let oldest = runs
+            .filter { $0.value.status.isHostTerminal }
+            .min { left, right in
+                (left.value.completedAt ?? .distantPast) < (right.value.completedAt ?? .distantPast)
+            }?
+            .key
+        if let oldest { runs[oldest] = nil }
     }
 
     private func selectedModel(for query: InferenceQuery) async throws -> InstalledModel {
@@ -294,38 +325,50 @@ extension DirectResourceHostHandler {
         request: InferPeer_V2_StartRunRequest
     ) throws -> InferPeer_V2_StartRunResponse {
         guard run.specification == request.specificationBytes,
-            run.attachmentReceipts == request.attachmentReceipts
+            run.attachmentReceipts == request.attachmentReceipts,
+            request.remainingTimeoutMilliseconds <= run.originalTimeoutMilliseconds
         else {
             throw InferPeerError(code: .requestConflict, isRetryable: false)
         }
         return Self.startResponse(
             run: run,
             requestID: request.requestID,
-            incarnation: incarnation,
-            originalTimeout: request.remainingTimeoutMilliseconds
+            incarnation: incarnation
         )
     }
 
-    private func response(
-        for key: RunKey,
-        originalTimeout: UInt64
-    ) throws -> InferPeer_V2_StartRunResponse {
+    private func validatePendingAdmission(
+        _ admission: PendingRunAdmission,
+        request: InferPeer_V2_StartRunRequest
+    ) throws {
+        guard admission.specification == request.specificationBytes,
+            admission.attachmentReceipts == request.attachmentReceipts,
+            request.remainingTimeoutMilliseconds <= admission.originalTimeoutMilliseconds
+        else {
+            throw InferPeerError(code: .requestConflict, isRetryable: false)
+        }
+    }
+
+    private func clearPendingAdmission(_ key: RunKey, id: UUID) {
+        guard pendingRunAdmissions[key]?.id == id else { return }
+        pendingRunAdmissions[key] = nil
+    }
+
+    private func response(for key: RunKey) throws -> InferPeer_V2_StartRunResponse {
         guard let run = runs[key] else {
             throw InferPeerError(code: .internal, isRetryable: false)
         }
         return Self.startResponse(
             run: run,
             requestID: key.requestID.rawValue,
-            incarnation: incarnation,
-            originalTimeout: originalTimeout
+            incarnation: incarnation
         )
     }
 
     private static func startResponse(
         run: HostedRun,
         requestID: String,
-        incarnation: String,
-        originalTimeout: UInt64
+        incarnation: String
     ) -> InferPeer_V2_StartRunResponse {
         InferPeer_V2_StartRunResponse.with {
             $0.requestID = requestID
@@ -337,45 +380,8 @@ extension DirectResourceHostHandler {
             $0.state = DirectWireMapper.wireRunState(run.status)
             $0.incarnation = incarnation
             $0.firstEventSequence = run.events.first?.sequence ?? 0
-            $0.originalTimeoutMilliseconds = originalTimeout
+            $0.originalTimeoutMilliseconds = run.originalTimeoutMilliseconds
         }
-    }
-
-    private func subscribe(
-        key: RunKey,
-        after sequence: UInt64
-    ) throws -> (
-        id: UUID,
-        stream: DirectRPCStream<InferPeer_V2_WatchRunResponse>,
-        continuation: DirectRPCStream<InferPeer_V2_WatchRunResponse>.Continuation
-    ) {
-        guard var run = runs[key] else {
-            throw InferPeerError(code: .outcomeUnknown, isRetryable: true)
-        }
-        let first = run.events.first?.sequence ?? sequence + 1
-        guard sequence + 1 >= first else {
-            throw InferPeerError(code: .replayExpired, isRetryable: false)
-        }
-        let pair = DirectRPCStream<InferPeer_V2_WatchRunResponse>.makeStream(
-            bufferingPolicy: .bufferingOldest(64)
-        )
-        for event in run.events where event.sequence > sequence {
-            pair.continuation.yield(
-                InferPeer_V2_WatchRunResponse.with { $0.event = event }
-            )
-        }
-        let id = UUID()
-        if run.status.isHostTerminal {
-            pair.continuation.finish()
-        } else {
-            run.watchers[id] = pair.continuation
-            runs[key] = run
-        }
-        return (id, pair.stream, pair.continuation)
-    }
-
-    private func removeWatcher(_ id: UUID, key: RunKey) {
-        runs[key]?.watchers[id] = nil
     }
 
     private static func runEvents(_ event: DirectRuntimeEvent) -> [RunEvent] {

@@ -1,12 +1,9 @@
-import Crypto
 import Foundation
 @testable import InferPeer
 import InferPeerCore
 import InferPeerGRPC
 import InferPeerInference
-import InferPeerModelStore
 import InferPeerProtocol
-import InferPeerSecurity
 import Testing
 
 @Suite("Foreground direct resource host")
@@ -31,13 +28,7 @@ struct DirectResourceHostHandlerTests {
         let principal = try await fixture.access.authorize(response.credential)
 
         let hello = try await withPrincipal(principal.rawValue) {
-            try await fixture.handler.hello(
-                InferPeer_V2_HelloRequest.with {
-                    $0.protocolMajor = 2
-                    $0.minimumMinor = 0
-                    $0.maximumMinor = 0
-                }
-            )
+            try await fixture.handler.hello(helloRequest())
         }
 
         #expect(hello.resourceID == fixture.resourceID.rawValue)
@@ -51,17 +42,10 @@ struct DirectResourceHostHandlerTests {
         defer { fixture.remove() }
         let codec = DefaultDirectResourceWireCodec()
         let requestID = try #require(RequestID(rawValue: "host-run-1"))
-        let query = InferenceQuery.text(
-            model: .exact(fixture.installed.key),
-            messages: [.user("Run on this resource")]
+        let request = try textRunRequest(
+            model: fixture.installed.key,
+            requestID: requestID.rawValue
         )
-        let encoded = try codec.encode(query, options: RunOptions(requestID: requestID))
-        let request = InferPeer_V2_StartRunRequest.with {
-            $0.requestID = requestID.rawValue
-            $0.specificationBytes = encoded.bytes
-            $0.attachmentReceipts = encoded.attachmentReceipts
-            $0.remainingTimeoutMilliseconds = 5_000
-        }
 
         let first = try await withPrincipal("owner-one") {
             try await fixture.handler.startRun(request)
@@ -86,11 +70,36 @@ struct DirectResourceHostHandlerTests {
         #expect(result.text == "offline")
     }
 
+    @Test("A replay cannot extend the originally admitted timeout")
+    func replayCannotExtendTimeout() async throws {
+        let fixture = try await DirectHostFixture()
+        defer { fixture.remove() }
+        let request = try textRunRequest(
+            model: fixture.installed.key,
+            requestID: "host-run-timeout",
+            timeoutMilliseconds: 5_000
+        )
+        _ = try await withPrincipal("owner-one") {
+            try await fixture.handler.startRun(request)
+        }
+        var extended = request
+        extended.remainingTimeoutMilliseconds = 5_001
+
+        do {
+            _ = try await withPrincipal("owner-one") {
+                try await fixture.handler.startRun(extended)
+            }
+            Issue.record("Expected a conflicting timeout extension")
+        } catch let error as InferPeerError {
+            #expect(error.code == .requestConflict)
+        }
+    }
+
     @Test("Uploaded image receipts are isolated to their paired owner")
     func isolatesUploadedAssets() async throws {
         let fixture = try await DirectHostFixture()
         defer { fixture.remove() }
-        let bytes = Data("image-fixture".utf8)
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0])
         let receipt = try await uploadAsset(bytes, handler: fixture.handler)
 
         await #expect(throws: InferPeerError.self) {
@@ -130,139 +139,5 @@ struct DirectResourceHostHandlerTests {
             return
         }
         #expect(revision == 1)
-    }
-}
-
-private func uploadAsset(
-    _ bytes: Data,
-    handler: DirectResourceHostHandler
-) async throws -> InferPeer_V2_UploadAssetResponse {
-    let prepared = try await withPrincipal("owner-one") {
-        try await handler.prepareAssets(
-            InferPeer_V2_PrepareAssetsRequest.with {
-                $0.assets = [
-                    InferPeer_V2_AssetDeclaration.with {
-                        $0.clientAssetID = "image-one"
-                        $0.byteCount = UInt64(bytes.count)
-                        $0.sha256 = Data(SHA256.hash(data: bytes))
-                        $0.mediaType = "image/jpeg"
-                    }
-                ]
-            }
-        )
-    }
-    let ticket = try #require(prepared.tickets.first?.ticket)
-    let upload = DirectRPCStream<InferPeer_V2_UploadAssetRequest>.makeStream()
-    upload.continuation.yield(
-        InferPeer_V2_UploadAssetRequest.with {
-            $0.ticket = ticket
-            $0.offset = 0
-            $0.data = bytes
-        }
-    )
-    upload.continuation.finish()
-    return try await withPrincipal("owner-one") {
-        try await handler.uploadAsset(upload.stream)
-    }
-}
-
-private struct DirectHostFixture {
-    let modelFixture: ModelStoreFixture
-    let store: InferPeerModelStore
-    let installed: InstalledModel
-    let invitations: DirectResourceInvitationAuthority
-    let access: DirectResourceAccessController
-    let handler: DirectResourceHostHandler
-    let resourceID = ResourceID(rawValue: "fixture-resource")
-
-    init() async throws {
-        let modelFixture = try ModelStoreFixture()
-        let store = try await InferPeerModelStore.open(
-            configuration: modelFixture.configuration(
-                downloader: MemoryModelDownloader(data: modelFixture.data),
-                adapters: [TestRuntimeAdapter()]
-            )
-        )
-        let installation = try await store.install(
-            modelFixture.entry.metadata.key,
-            task: .textGeneration,
-            on: makeDevice(),
-            authorization: ModelDownloadAuthorization(resourceID: .local)
-        )
-        let installed = try await installedModel(from: installation)
-        let secrets = HostMemorySecretStore()
-        let invitations = DirectResourceInvitationAuthority(secretStore: secrets)
-        let access = try DirectResourceAccessController(
-            secretStore: secrets,
-            invitations: invitations
-        )
-        let handler = try DirectResourceHostHandler(
-            resourceID: resourceID,
-            displayName: "Fixture iPhone",
-            platform: makeDevice().platform,
-            store: store,
-            deviceProfile: makeDevice(),
-            accessController: access,
-            assetRoot: modelFixture.root.appendingPathComponent("assets", isDirectory: true),
-            resourceHeartbeatInterval: .milliseconds(5)
-        )
-        self.modelFixture = modelFixture
-        self.store = store
-        self.installed = installed
-        self.invitations = invitations
-        self.access = access
-        self.handler = handler
-    }
-
-    func remove() { modelFixture.remove() }
-}
-
-private final class HostMemorySecretStore: SecretStore, @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [String: Data] = [:]
-
-    func data(forKey key: String) throws -> Data? {
-        lock.withLock { values[key] }
-    }
-
-    func setData(_ data: Data, forKey key: String) throws {
-        lock.withLock { values[key] = data }
-    }
-
-    func removeData(forKey key: String) throws {
-        lock.withLock { values[key] = nil }
-    }
-}
-
-private func installedModel(from installation: ModelInstallation) async throws -> InstalledModel {
-    for try await event in installation.events {
-        if case .installed(let model) = event { return model }
-    }
-    throw InferPeerError(code: .modelUnavailable, isRetryable: false)
-}
-
-private func completedRun(
-    handler: DirectResourceHostHandler,
-    requestID: RequestID,
-    principal: String
-) async throws -> InferPeer_V2_GetRunResponse {
-    for _ in 0..<100 {
-        let response = try await withPrincipal(principal) {
-            try await handler.getRun(
-                InferPeer_V2_GetRunRequest.with { $0.requestID = requestID.rawValue }
-            )
-        }
-        if response.state == .completed { return response }
-        try await Task.sleep(for: .milliseconds(1))
-    }
-    throw InferPeerError(code: .deadlineExceeded, isRetryable: false)
-}
-
-private func withPrincipal<Value: Sendable>(
-    _ principal: String,
-    operation: () async throws -> Value
-) async rethrows -> Value {
-    try await DirectResourceRequestContext.$principalID.withValue(principal) {
-        try await operation()
     }
 }

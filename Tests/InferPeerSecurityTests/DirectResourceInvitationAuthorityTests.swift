@@ -70,4 +70,27 @@ struct DirectResourceInvitationAuthorityTests {
             ) == invitation.resourceID
         )
     }
+
+    @Test("A revoked invitation cannot be consumed")
+    func revokesInvitation() async throws {
+        let authority = DirectResourceInvitationAuthority(secretStore: MemorySecretStore())
+        let invitation = try await authority.issue(
+            resourceID: ResourceID(rawValue: "resource-mac"),
+            endpoint: try PeerEndpoint(host: "192.168.1.30", port: 57_421),
+            certificateFingerprint: try CertificateFingerprint(
+                bytes: Data(repeating: 0x5C, count: CertificateFingerprint.byteCount)
+            )
+        )
+        let invitationID = try #require(invitation.invitationID)
+
+        try await authority.revoke(invitationID)
+
+        await #expect(throws: InferPeerSecurityError.invitationUnknownOrConsumed) {
+            _ = try await authority.consume(
+                invitationID: invitationID,
+                secret: invitation.secret,
+                expectedResourceID: invitation.resourceID
+            )
+        }
+    }
 }

@@ -155,6 +155,39 @@ extension DirectResourceFacadeTests {
         #expect(await fixture.backend.generationCount() == 1)
     }
 
+    @Test("Concurrent retries of one request ID share a single admission")
+    func concurrentDuplicateRequestIDsShareAdmission() async throws {
+        let fixture = try DirectResourceFixture(autoComplete: false)
+        let requestID = try #require(RequestID(rawValue: "concurrent-deduplicated-request"))
+        let options = RunOptions(requestID: requestID)
+        let facade = fixture.facade
+        let query = fixture.query()
+
+        let handles = try await withThrowingTaskGroup(of: RunHandle.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    try await facade.run(query, resourceId: .local, options: options)
+                }
+            }
+            var values: [RunHandle] = []
+            for try await handle in group { values.append(handle) }
+            return values
+        }
+        await fixture.backend.waitUntilGenerationStarts(count: 1)
+        await fixture.backend.completeAll()
+        let results = try await withThrowingTaskGroup(of: RunResult.self) { group in
+            for handle in handles {
+                group.addTask { try await handle.result() }
+            }
+            var values: [RunResult] = []
+            for try await result in group { values.append(result) }
+            return values
+        }
+
+        #expect(Set(results).count == 1)
+        #expect(await fixture.backend.generationCount() == 1)
+    }
+
     @Test("Reusing a request ID for different content is rejected")
     func conflictingRequestIDIsRejected() async throws {
         let fixture = try DirectResourceFixture(autoComplete: false)

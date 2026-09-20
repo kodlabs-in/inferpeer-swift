@@ -9,14 +9,18 @@ public struct InferPeerModelStoreServices: Sendable {
     public let downloader: any ModelFileDownloading
     /// Optional safe archive decoder selected by the host.
     public let archiveExtractor: (any ModelArchiveExtracting)?
+    /// Bounded HTTPS transport for optional catalog refreshes.
+    public let catalogDownloader: any SignedModelCatalogDownloading
 
     /// Creates service dependencies.
     public init(
         downloader: any ModelFileDownloading = ResumableHTTPSModelDownloader(),
-        archiveExtractor: (any ModelArchiveExtracting)? = nil
+        archiveExtractor: (any ModelArchiveExtracting)? = nil,
+        catalogDownloader: any SignedModelCatalogDownloading = HTTPSSignedModelCatalogDownloader()
     ) {
         self.downloader = downloader
         self.archiveExtractor = archiveExtractor
+        self.catalogDownloader = catalogDownloader
     }
 }
 
@@ -60,10 +64,12 @@ public actor InferPeerModelStore {
     let manifestStore: SQLiteVerifiedModelManifestStore
     let downloader: any ModelFileDownloading
     private let archiveExtractor: (any ModelArchiveExtracting)?
+    private let catalogDownloader: any SignedModelCatalogDownloading
     var catalogValue: ModelCatalog
     var activeJobs: [UUID: Task<Void, Never>] = [:]
     var activeEntries: Set<ModelCatalogKey> = []
     var sessions: [ModelKey: any InferPeerModelSession] = [:]
+    var activeModelLifecycleOperations: Set<ModelKey> = []
 
     private init(
         configuration: InferPeerModelStoreConfiguration,
@@ -82,6 +88,7 @@ public actor InferPeerModelStore {
         self.manifestStore = manifestStore
         downloader = configuration.services.downloader
         archiveExtractor = configuration.services.archiveExtractor
+        catalogDownloader = configuration.services.catalogDownloader
         catalogValue = catalog
     }
 
@@ -91,7 +98,11 @@ public actor InferPeerModelStore {
     ) async throws -> InferPeerModelStore {
         let layout = try ModelStoreLayout(root: configuration.rootDirectory)
         let verifier = ModelCatalogVerifier(trustedKeys: configuration.trustedCatalogKeys)
-        let catalog = try verifier.verify(configuration.builtInCatalog)
+        let selection = try selectCatalog(
+            configuration: configuration,
+            layout: layout,
+            verifier: verifier
+        )
         let adapters = try RuntimeAdapterRegistry(configuration.runtimeAdapters)
         let registry = try ModelStoreRegistry(
             databaseURL: layout.databaseURL,
@@ -101,12 +112,12 @@ public actor InferPeerModelStore {
             databaseURL: layout.databaseURL,
             modelRootDirectory: layout.installedDirectory
         )
-        try await registry.replaceCatalog(catalog)
-        try Self.persist(configuration.builtInCatalog, in: layout)
+        try await registry.replaceCatalog(selection.catalog)
+        try Self.persist(selection.envelope, in: layout)
         let store = InferPeerModelStore(
             configuration: configuration,
             layout: layout,
-            catalog: catalog,
+            catalog: selection.catalog,
             adapters: adapters,
             registry: registry,
             manifestStore: manifestStore
@@ -171,13 +182,7 @@ public actor InferPeerModelStore {
 
     /// Fetches a signed envelope over HTTPS and applies the same pinned-key checks.
     public func refreshCatalog(from url: URL) async throws {
-        guard url.scheme?.lowercased() == "https" else {
-            throw ModelCatalogError.insecureDownloadURL
-        }
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
-            throw ModelDownloadError.invalidResponse
-        }
+        let data = try await catalogDownloader.download(from: url)
         let signedCatalog = try JSONDecoder().decode(SignedModelCatalog.self, from: data)
         try await refreshCatalog(signedCatalog)
     }
@@ -250,4 +255,42 @@ public actor InferPeerModelStore {
         }
     }
 
+}
+
+private extension InferPeerModelStore {
+    struct CatalogSelection {
+        let envelope: SignedModelCatalog
+        let catalog: ModelCatalog
+    }
+
+    static func selectCatalog(
+        configuration: InferPeerModelStoreConfiguration,
+        layout: ModelStoreLayout,
+        verifier: ModelCatalogVerifier
+    ) throws -> CatalogSelection {
+        let bundled = CatalogSelection(
+            envelope: configuration.builtInCatalog,
+            catalog: try verifier.verify(configuration.builtInCatalog)
+        )
+        return persistedCatalog(in: layout, newerThan: bundled, verifier: verifier) ?? bundled
+    }
+
+    static func persistedCatalog(
+        in layout: ModelStoreLayout,
+        newerThan bundled: CatalogSelection,
+        verifier: ModelCatalogVerifier
+    ) -> CatalogSelection? {
+        do {
+            let url = layout.catalogDirectory.appendingPathComponent("catalog.signed.json")
+            let envelope = try JSONDecoder().decode(
+                SignedModelCatalog.self,
+                from: Data(contentsOf: url)
+            )
+            let catalog = try verifier.verify(envelope)
+            try verifier.validateUpdate(current: bundled.catalog, replacement: catalog)
+            return CatalogSelection(envelope: envelope, catalog: catalog)
+        } catch {
+            return nil
+        }
+    }
 }

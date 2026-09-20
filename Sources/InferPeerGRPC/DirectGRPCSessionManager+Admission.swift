@@ -140,7 +140,6 @@ extension DirectGRPCSessionManager {
                     return
                 }
                 attempts += 1
-                await disconnect(context.resourceID)
                 do {
                     try await sleep(beforeAttempt: attempts + 1)
                 } catch {
@@ -159,26 +158,31 @@ extension DirectGRPCSessionManager {
         } else {
             session = try await self.session(for: context.resourceID)
         }
-        try requireIncarnation(session.incarnation, expected: context.expectedIncarnation)
-        if reconnecting {
-            try await reconcileReplay(
+        do {
+            try requireIncarnation(session.incarnation, expected: context.expectedIncarnation)
+            if reconnecting {
+                try await reconcileReplay(
+                    requestID: context.requestID,
+                    session: session,
+                    state: context.state
+                )
+                guard !(await context.state.status()).isTerminal else { return }
+            }
+            let cursor = await context.state.latestSequence()
+            try await session.connection.watchRun(
                 requestID: context.requestID,
-                session: session,
-                state: context.state
-            )
-            guard !(await context.state.status()).isTerminal else { return }
-        }
-        let cursor = await context.state.latestSequence()
-        try await session.connection.watchRun(
-            requestID: context.requestID,
-            resumeAfterSequence: cursor
-        ) { event in
-            try await self.apply(
-                event,
-                requestID: context.requestID,
-                incarnation: context.expectedIncarnation,
-                state: context.state
-            )
+                resumeAfterSequence: cursor
+            ) { event in
+                try await self.apply(
+                    event,
+                    requestID: context.requestID,
+                    incarnation: context.expectedIncarnation,
+                    state: context.state
+                )
+            }
+        } catch {
+            invalidate(context.resourceID, matching: session)
+            throw error
         }
     }
 

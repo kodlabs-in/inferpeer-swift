@@ -112,18 +112,21 @@ struct DirectFixedMemoryAvailability: MemoryAvailabilityProvider {
 
 actor DirectFakeExposure: ResourceExposure {
     nonisolated let endpoint: PeerEndpoint
+    private let startDelay: Duration
     private var starts = 0
     private var stops = 0
 
-    init() {
+    init(startDelay: Duration = .zero) {
         guard let endpoint = try? PeerEndpoint(host: "127.0.0.1", port: 9443) else {
             preconditionFailure("The fixed fake exposure endpoint must be valid")
         }
         self.endpoint = endpoint
+        self.startDelay = startDelay
     }
 
-    func start(configuration: ExposureConfiguration) -> ExposureHandle {
+    func start(configuration: ExposureConfiguration) async throws -> ExposureHandle {
         starts += 1
+        if startDelay > .zero { try await Task.sleep(for: startDelay) }
         return ExposureHandle(endpoint: endpoint) { [weak self] in
             await self?.recordStop()
         }

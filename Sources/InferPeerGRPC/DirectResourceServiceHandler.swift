@@ -6,6 +6,8 @@ public typealias DirectRPCStream<Element: Sendable> = TransportMessageStream<Ele
 
 /// Application-owned implementation of all v2 direct-resource operations.
 public protocol DirectResourceServiceHandling: Sendable {
+    /// Cancels admitted work and clears process-local state when exposure stops.
+    func suspend() async
     /// Consumes one invitation and returns scoped credentials.
     func pair(_ request: InferPeer_V2_PairRequest) async throws -> InferPeer_V2_PairResponse
     /// Negotiates protocol and endpoint capabilities.
@@ -52,4 +54,10 @@ public protocol DirectResourceServiceHandling: Sendable {
     func releaseAsset(
         _ request: InferPeer_V2_ReleaseAssetRequest
     ) async throws -> InferPeer_V2_ReleaseAssetResponse
+}
+
+public extension DirectResourceServiceHandling {
+    // Preserves compatibility for stateless custom handlers.
+    // swiftlint:disable:next async_without_await
+    func suspend() async {}
 }

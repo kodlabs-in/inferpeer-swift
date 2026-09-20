@@ -42,6 +42,8 @@ public actor DirectResourceAccessController {
     private let secretStore: any SecretStore
     private let invitations: DirectResourceInvitationAuthority
     private let maximumPairings: Int
+    private var pendingExchanges = 0
+    private var revocationToken = UUID()
 
     /// Creates an access controller sharing the host's device-local secret store.
     public init(
@@ -63,18 +65,25 @@ public actor DirectResourceAccessController {
         secret: Data,
         expectedResourceID: ResourceID
     ) async throws -> DirectResourceAccessGrant {
-        var records = try loadRecords()
-        guard records.count < maximumPairings else {
+        let retainedCount = try loadRecords().count
+        guard retainedCount + pendingExchanges < maximumPairings else {
             throw DirectResourceAccessError.maximumPairingsReached
         }
+        pendingExchanges += 1
+        defer { pendingExchanges -= 1 }
+        let exchangeRevocationToken = revocationToken
         _ = try await invitations.consume(
             invitationID: invitationID,
             secret: secret,
             expectedResourceID: expectedResourceID
         )
+        guard exchangeRevocationToken == revocationToken else {
+            throw DirectResourceAccessError.invalidCredential
+        }
         let credential = try SecureRandom.data(count: Self.credentialByteCount)
         let digest = Self.digest(credential)
         let principal = DirectResourcePrincipal(rawValue: digest)
+        var records = try loadRecords()
         records[digest] = DirectAccessRecord(principalID: principal.rawValue)
         try persist(records)
         return DirectResourceAccessGrant(principal: principal, credential: credential)
@@ -100,6 +109,12 @@ public actor DirectResourceAccessController {
     /// Returns the number of retained paired identities without exposing credentials.
     public func pairingCount() throws -> Int {
         try loadRecords().count
+    }
+
+    /// Revokes every retained paired application identity.
+    public func revokeAll() throws {
+        try secretStore.removeData(forKey: SecuritySecretKey.directResourceCredentials)
+        revocationToken = UUID()
     }
 
     private func loadRecords() throws -> [String: DirectAccessRecord] {

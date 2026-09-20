@@ -31,6 +31,8 @@ extension InferPeerModelStore {
         guard sessions[key] == nil else {
             throw InferPeerModelStoreError.modelAlreadyLoaded(key)
         }
+        try reserveLifecycleOperation(for: key)
+        defer { activeModelLifecycleOperations.remove(key) }
         guard let model = try await installedModel(key) else {
             throw InferPeerModelStoreError.modelNotInstalled(key)
         }
@@ -51,6 +53,9 @@ extension InferPeerModelStore {
     public func run(_ request: InferenceQuery, using key: ModelKey) throws
         -> DirectRuntimeEventStream
     {
+        guard !activeModelLifecycleOperations.contains(key) else {
+            throw InferPeerModelStoreError.modelInUse(key)
+        }
         guard let session = sessions[key] else {
             throw InferPeerModelStoreError.modelNotLoaded(key)
         }
@@ -65,10 +70,13 @@ extension InferPeerModelStore {
 
     /// Unloads one active model session.
     public func unload(_ key: ModelKey) async throws {
-        guard let session = sessions.removeValue(forKey: key) else {
+        try reserveLifecycleOperation(for: key)
+        defer { activeModelLifecycleOperations.remove(key) }
+        guard let session = sessions[key] else {
             throw InferPeerModelStoreError.modelNotLoaded(key)
         }
         await session.unload()
+        sessions.removeValue(forKey: key)
         try await registry.updateInstallationState(.installed, key: key)
     }
 
@@ -77,6 +85,8 @@ extension InferPeerModelStore {
         _ key: ModelKey,
         policy: ModelRemovalPolicy = .refuseIfLoaded
     ) async throws {
+        try reserveLifecycleOperation(for: key)
+        defer { activeModelLifecycleOperations.remove(key) }
         try await unloadForRemoval(key, policy: policy)
         guard let installed = try await installedModel(key) else {
             throw InferPeerModelStoreError.modelNotInstalled(key)
@@ -160,6 +170,12 @@ extension InferPeerModelStore {
         }
         await session.unload()
         sessions.removeValue(forKey: key)
+    }
+
+    private func reserveLifecycleOperation(for key: ModelKey) throws {
+        guard activeModelLifecycleOperations.insert(key).inserted else {
+            throw InferPeerModelStoreError.modelInUse(key)
+        }
     }
 
     private static func removeManagedDirectory(_ url: URL, inside root: URL) throws {

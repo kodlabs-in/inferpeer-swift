@@ -50,6 +50,9 @@ public actor ResumableHTTPSModelDownloader: ModelFileDownloading {
             request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
         }
         let (bytes, response) = try await session.bytes(for: request)
+        guard response.url?.scheme?.lowercased() == "https" else {
+            throw ModelDownloadError.insecureURL
+        }
         let startOffset = try Self.startOffset(
             response: response,
             requestedOffset: existingBytes

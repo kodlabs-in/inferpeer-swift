@@ -320,10 +320,17 @@ private final class LlamaModelSession: InferPeerModelSession, @unchecked Sendabl
     func run(_ request: InferenceQuery) -> DirectRuntimeEventStream {
         let pair = DirectRuntimeEventStream.makeStream(bufferingPolicy: .bufferingOldest(64))
         let collector = LlamaOutputCollector(continuation: pair.continuation)
+        let runID = UUID()
+        do {
+            try state.begin(runID)
+        } catch {
+            pair.continuation.finish(throwing: error)
+            return pair.stream
+        }
         let task = Task.detached(priority: .userInitiated) { [modelKey, native, state] in
+            defer { state.finish(runID) }
             do {
-                try state.begin()
-                defer { state.finish() }
+                try Task.checkCancellation()
                 let input = try Self.input(from: request)
                 let summary = try native.generate(input: input, collector: collector)
                 let result = Self.result(
@@ -339,19 +346,15 @@ private final class LlamaModelSession: InferPeerModelSession, @unchecked Sendabl
         }
         pair.continuation.onTermination = { [native, state] _ in
             task.cancel()
-            state.finish()
-            native.cancel()
+            if state.requestCancellation(runID) { native.cancel() }
         }
         return pair.stream
     }
 
-    // Protocol requirement is async so other sessions can unload asynchronously.
-    // swiftlint:disable async_without_await
     func unload() async {
-        state.unload()
-        native.cancel()
+        if state.markUnloaded() { native.cancel() }
+        await state.waitUntilIdle()
     }
-    // swiftlint:enable async_without_await
 }
 
 private extension LlamaModelSession {
@@ -410,22 +413,49 @@ private extension LlamaModelSession {
 
 private final class LlamaSessionState: @unchecked Sendable {
     private let lock = NSLock()
-    private var running = false
+    private var activeRunID: UUID?
     private var unloaded = false
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func begin() throws {
+    func begin(_ runID: UUID) throws {
         try lock.withLock {
-            guard !running, !unloaded else { throw LlamaAdapterError.sessionUnavailable }
-            running = true
+            guard activeRunID == nil, !unloaded else {
+                throw LlamaAdapterError.sessionUnavailable
+            }
+            activeRunID = runID
         }
     }
 
-    func finish() {
-        lock.withLock { running = false }
+    func finish(_ runID: UUID) {
+        let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            guard activeRunID == runID else { return [] }
+            activeRunID = nil
+            defer { idleWaiters.removeAll(keepingCapacity: false) }
+            return idleWaiters
+        }
+        waiters.forEach { $0.resume() }
     }
 
-    func unload() {
-        lock.withLock { unloaded = true }
+    func requestCancellation(_ runID: UUID) -> Bool {
+        lock.withLock { activeRunID == runID }
+    }
+
+    func markUnloaded() -> Bool {
+        lock.withLock {
+            unloaded = true
+            return activeRunID != nil
+        }
+    }
+
+    func waitUntilIdle() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = lock.withLock { () -> Bool in
+                guard activeRunID != nil else { return true }
+                idleWaiters.append(continuation)
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
     }
 }
 // swiftlint:enable file_length

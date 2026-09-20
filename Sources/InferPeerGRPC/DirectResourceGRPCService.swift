@@ -19,6 +19,11 @@ public struct DirectResourceGRPCService: InferPeer_V2_DirectResourceService.Serv
         self.streamBufferLimit = streamBufferLimit
     }
 
+    /// Suspends the application handler after its listener is withdrawn.
+    public func suspend() async {
+        await handler.suspend()
+    }
+
     /// Handles one invitation-bound pairing request.
     public func pair(
         request: InferPeer_V2_PairRequest,

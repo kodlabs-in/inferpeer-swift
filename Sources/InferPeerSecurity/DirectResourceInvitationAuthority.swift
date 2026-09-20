@@ -71,6 +71,13 @@ public actor DirectResourceInvitationAuthority {
         return expectedResourceID
     }
 
+    /// Invalidates an invitation before it is consumed or expires.
+    public func revoke(_ invitationID: InvitationID) throws {
+        try secretStore.removeData(
+            forKey: SecuritySecretKey.directInvitation(invitationID.rawValue)
+        )
+    }
+
     private func makeInvitationID() throws -> InvitationID {
         guard let id = InvitationID(rawValue: try SecureRandom.identifier(prefix: "resource-"))
         else {

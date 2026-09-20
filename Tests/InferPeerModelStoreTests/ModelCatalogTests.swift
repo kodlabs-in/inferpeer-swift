@@ -66,6 +66,92 @@ struct ModelCatalogTests {
         }
     }
 
+    @Test("A newer verified catalog survives reopening the model store")
+    func restoresPersistedCatalogUpdate() async throws {
+        let fixture = try ModelStoreFixture()
+        defer { fixture.remove() }
+        let configuration = try fixture.configuration(
+            downloader: MemoryModelDownloader(data: fixture.data),
+            adapters: [TestRuntimeAdapter()]
+        )
+        let store = try await InferPeerModelStore.open(configuration: configuration)
+        let update = try fixture.signedCatalog(
+            revision: "catalog-2",
+            generatedAt: Date(timeIntervalSince1970: 3_000)
+        )
+
+        try await store.refreshCatalog(update)
+        let reopened = try await InferPeerModelStore.open(configuration: configuration)
+
+        #expect(await reopened.catalog().revision == "catalog-2")
+    }
+
+    @Test("An invalid persisted catalog falls back to the bundled catalog")
+    func rejectsInvalidPersistedCatalog() async throws {
+        let fixture = try ModelStoreFixture()
+        defer { fixture.remove() }
+        let configuration = try fixture.configuration(
+            downloader: MemoryModelDownloader(data: fixture.data),
+            adapters: [TestRuntimeAdapter()]
+        )
+        let store = try await InferPeerModelStore.open(configuration: configuration)
+        let update = try fixture.signedCatalog(
+            revision: "catalog-2",
+            generatedAt: Date(timeIntervalSince1970: 3_000)
+        )
+        try await store.refreshCatalog(update)
+        let catalogURL = fixture.root
+            .appendingPathComponent("catalog", isDirectory: true)
+            .appendingPathComponent("catalog.signed.json")
+        try Data("not a signed catalog".utf8).write(to: catalogURL, options: .atomic)
+
+        let reopened = try await InferPeerModelStore.open(configuration: configuration)
+
+        #expect(await reopened.catalog().revision == "catalog-1")
+    }
+
+    @Test("Duplicate catalog download paths are rejected without trapping")
+    func rejectsDuplicateDownloadPaths() throws {
+        let fixture = try ModelStoreFixture()
+        defer { fixture.remove() }
+        let download = try #require(fixture.entry.downloadFiles.first)
+
+        #expect(throws: ModelCatalogError.downloadManifestMismatch) {
+            _ = try ModelCatalogEntry(
+                metadata: fixture.entry.metadata,
+                manifest: fixture.entry.manifest,
+                downloadFiles: [download, download],
+                license: fixture.entry.license,
+                requirements: fixture.entry.requirements,
+                validation: fixture.entry.validation
+            )
+        }
+    }
+
+    @Test("Catalog download byte totals reject unsigned overflow")
+    func rejectsDownloadByteOverflow() throws {
+        let fixture = try ModelStoreFixture()
+        defer { fixture.remove() }
+        let download = try #require(fixture.entry.downloadFiles.first)
+        let oversized = try ModelDownloadFile(
+            relativePath: download.relativePath,
+            url: download.url,
+            byteCount: .max,
+            sha256: download.sha256
+        )
+
+        #expect(throws: ModelCatalogError.downloadSizeOverflow) {
+            _ = try ModelCatalogEntry(
+                metadata: fixture.entry.metadata,
+                manifest: fixture.entry.manifest,
+                downloadFiles: [oversized, oversized],
+                license: fixture.entry.license,
+                requirements: fixture.entry.requirements,
+                validation: fixture.entry.validation
+            )
+        }
+    }
+
     @Test("Recommendation uses actual memory and explains rejected candidates")
     func recommendsForActualResources() async throws {
         let small = try ModelStoreFixture(modelID: "small", minimumPhysicalMemoryBytes: 2_000)

@@ -25,6 +25,7 @@ public struct ExposureHandle: Sendable {
     public let endpoint: PeerEndpoint
 
     private let lease: ExposureLease
+    private let isActive: @Sendable () async -> Bool
 
     /// Creates a handle around one already-bound adapter endpoint.
     public init(
@@ -33,6 +34,17 @@ public struct ExposureHandle: Sendable {
     ) {
         self.endpoint = endpoint
         lease = ExposureLease(stopOperation: stop)
+        isActive = { true }
+    }
+
+    package init(
+        endpoint: PeerEndpoint,
+        stop: @escaping @Sendable () async -> Void,
+        isActive: @escaping @Sendable () async -> Bool
+    ) {
+        self.endpoint = endpoint
+        lease = ExposureLease(stopOperation: stop)
+        self.isActive = isActive
     }
 
     /// Withdraws advertising and stops the listener at most once.
@@ -41,7 +53,8 @@ public struct ExposureHandle: Sendable {
     }
 
     package func isStopped() async -> Bool {
-        await lease.stopped()
+        if await lease.stopped() { return true }
+        return !(await isActive())
     }
 }
 

@@ -66,6 +66,80 @@ struct DirectResourceAccessControllerTests {
             expectedResourceID: second.resourceID
         )
     }
+
+    @Test("All paired principals can be revoked together")
+    func revokesAllPairings() async throws {
+        let store = MemorySecretStore()
+        let invitations = DirectResourceInvitationAuthority(secretStore: store)
+        let controller = try DirectResourceAccessController(
+            secretStore: store,
+            invitations: invitations
+        )
+        let first = try await issueInvitation(with: invitations, resourceID: "resource-one")
+        let firstGrant = try await controller.exchange(
+            invitationID: try #require(first.invitationID),
+            secret: first.secret,
+            expectedResourceID: first.resourceID
+        )
+        let second = try await issueInvitation(with: invitations, resourceID: "resource-two")
+        let secondGrant = try await controller.exchange(
+            invitationID: try #require(second.invitationID),
+            secret: second.secret,
+            expectedResourceID: second.resourceID
+        )
+
+        #expect(try await controller.pairingCount() == 2)
+        try await controller.revokeAll()
+        #expect(try await controller.pairingCount() == 0)
+        for credential in [firstGrant.credential, secondGrant.credential] {
+            await #expect(throws: DirectResourceAccessError.invalidCredential) {
+                _ = try await controller.authorize(credential)
+            }
+        }
+    }
+
+    @Test("Concurrent exchanges retain every issued credential")
+    func concurrentExchangesRetainEveryCredential() async throws {
+        let store = MemorySecretStore()
+        let invitations = DirectResourceInvitationAuthority(secretStore: store)
+        let controller = try DirectResourceAccessController(
+            secretStore: store,
+            invitations: invitations,
+            maximumPairings: 8
+        )
+        var pending: [ResourcePairingInvitation] = []
+        for index in 0..<8 {
+            pending.append(
+                try await issueInvitation(
+                    with: invitations,
+                    resourceID: "resource-\(index)"
+                )
+            )
+        }
+
+        let grants = try await withThrowingTaskGroup(
+            of: DirectResourceAccessGrant.self
+        ) { group in
+            for invitation in pending {
+                group.addTask {
+                    try await controller.exchange(
+                        invitationID: try #require(invitation.invitationID),
+                        secret: invitation.secret,
+                        expectedResourceID: invitation.resourceID
+                    )
+                }
+            }
+            var result: [DirectResourceAccessGrant] = []
+            for try await grant in group { result.append(grant) }
+            return result
+        }
+
+        #expect(grants.count == 8)
+        #expect(try await controller.pairingCount() == 8)
+        for grant in grants {
+            #expect(try await controller.authorize(grant.credential) == grant.principal)
+        }
+    }
 }
 
 private func issueInvitation(

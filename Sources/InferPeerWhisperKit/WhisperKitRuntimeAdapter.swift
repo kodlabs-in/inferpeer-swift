@@ -204,10 +204,17 @@ private final class WhisperKitModelSession: InferPeerModelSession, @unchecked Se
 
     func run(_ request: InferenceQuery) -> DirectRuntimeEventStream {
         let pair = DirectRuntimeEventStream.makeStream(bufferingPolicy: .bufferingOldest(64))
+        let runID = UUID()
+        do {
+            try state.begin(runID)
+        } catch {
+            pair.continuation.finish(throwing: error)
+            return pair.stream
+        }
         let task = Task { [engine, modelKey, state] in
+            defer { state.finish(runID) }
             do {
-                try state.begin()
-                defer { state.finish() }
+                try Task.checkCancellation()
                 let input = try Self.input(from: request)
                 pair.continuation.yield(.preprocessing(.decodingMedia))
                 let results = try await Self.transcribe(input: input, using: engine)
@@ -228,15 +235,14 @@ private final class WhisperKitModelSession: InferPeerModelSession, @unchecked Se
         }
         pair.continuation.onTermination = { [engine, state] _ in
             task.cancel()
-            state.finish()
-            engine.clearState()
+            if state.requestCancellation(runID) { engine.clearState() }
         }
         return pair.stream
     }
 
     func unload() async {
-        state.unload()
-        engine.clearState()
+        if state.markUnloaded() { engine.clearState() }
+        await state.waitUntilIdle()
         await engine.unloadModels()
     }
 }
@@ -330,23 +336,48 @@ private final class WhisperKitHandle: @unchecked Sendable {
 
 private final class WhisperKitSessionState: @unchecked Sendable {
     private let lock = NSLock()
-    private var running = false
+    private var activeRunID: UUID?
     private var unloaded = false
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func begin() throws {
+    func begin(_ runID: UUID) throws {
         try lock.withLock {
-            guard !running, !unloaded else {
+            guard activeRunID == nil, !unloaded else {
                 throw WhisperKitAdapterError.sessionUnavailable
             }
-            running = true
+            activeRunID = runID
         }
     }
 
-    func finish() {
-        lock.withLock { running = false }
+    func finish(_ runID: UUID) {
+        let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            guard activeRunID == runID else { return [] }
+            activeRunID = nil
+            defer { idleWaiters.removeAll(keepingCapacity: false) }
+            return idleWaiters
+        }
+        waiters.forEach { $0.resume() }
     }
 
-    func unload() {
-        lock.withLock { unloaded = true }
+    func requestCancellation(_ runID: UUID) -> Bool {
+        lock.withLock { activeRunID == runID }
+    }
+
+    func markUnloaded() -> Bool {
+        lock.withLock {
+            unloaded = true
+            return activeRunID != nil
+        }
+    }
+
+    func waitUntilIdle() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = lock.withLock { () -> Bool in
+                guard activeRunID != nil else { return true }
+                idleWaiters.append(continuation)
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
     }
 }

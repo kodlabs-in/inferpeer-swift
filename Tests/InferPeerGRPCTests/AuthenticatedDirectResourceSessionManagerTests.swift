@@ -1,12 +1,32 @@
 import Foundation
 import InferPeerCore
-import InferPeerGRPC
+@testable import InferPeerGRPC
 import InferPeerInference
 import InferPeerProtocol
 import Testing
 
 @Suite("Authenticated direct resource sessions")
 struct DirectGRPCSessionManagerTests {
+    @Test("A stale channel failure cannot invalidate its replacement")
+    func staleSessionCannotInvalidateReplacement() async throws {
+        let fixture = try SessionFixture()
+        try await fixture.storeCredential()
+        await fixture.factory.enqueue(
+            FakeDirectRPCConnection(helloResponse: fixture.helloResponse())
+        )
+        await fixture.factory.enqueue(
+            FakeDirectRPCConnection(helloResponse: fixture.helloResponse())
+        )
+        let stale = try await fixture.manager.connectOnce(fixture.resourceID)
+        let replacement = try await fixture.manager.connectOnce(fixture.resourceID)
+
+        await fixture.manager.invalidate(fixture.resourceID, matching: stale)
+        let selected = try await fixture.manager.session(for: fixture.resourceID)
+
+        #expect(selected.id == replacement.id)
+        #expect(await fixture.factory.recordedOpenings().count == 2)
+    }
+
     @Test("Pairing pins the exact endpoint and persists the scoped credential")
     func pairsAndPersistsCredential() async throws {
         let fixture = try SessionFixture()

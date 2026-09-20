@@ -1,8 +1,46 @@
+import Foundation
 import InferPeerCore
 import InferPeerGRPC
 import InferPeerProtocol
 
 extension DirectResourceHostHandler {
+    // Async is required by the generated service protocol.
+    // swiftlint:disable async_without_await
+    /// Streams resource snapshots when models change and bounded idle heartbeats.
+    public func watchResource(
+        _ request: InferPeer_V2_WatchResourceRequest
+    ) async throws -> DirectRPCStream<InferPeer_V2_WatchResourceResponse> {
+        let principal = try requirePrincipal()
+        let principalWatcherCount = resourceWatchers.values.lazy
+            .filter { $0.principalID == principal }
+            .count
+        guard principalWatcherCount < Self.maximumResourceWatchersPerPrincipal,
+            resourceWatchers.count < Self.maximumResourceWatchers
+        else {
+            throw InferPeerError(code: .resourceExhausted, isRetryable: true)
+        }
+        let watcherID = UUID()
+        let pair = DirectRPCStream<InferPeer_V2_WatchResourceResponse>.makeStream()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.publishResourceUpdates(
+                after: request.knownRevision,
+                to: pair.continuation
+            )
+        }
+        resourceWatchers[watcherID] = ResourceWatcher(
+            principalID: principal,
+            continuation: pair.continuation,
+            task: task
+        )
+        pair.continuation.onTermination = { [weak self] _ in
+            task.cancel()
+            Task { await self?.removeResourceWatcher(watcherID) }
+        }
+        return pair.stream
+    }
+    // swiftlint:enable async_without_await
+
     func currentSnapshot() async throws -> ResourceSnapshot {
         let models = try await modelSummaries()
         updateResourceRevision(for: models)
@@ -37,6 +75,10 @@ extension DirectResourceHostHandler {
         } catch {
             continuation.finish(throwing: Self.publicError(error))
         }
+    }
+
+    func removeResourceWatcher(_ id: UUID) {
+        resourceWatchers[id] = nil
     }
 
     private func modelSummaries() async throws -> [ModelSummary] {

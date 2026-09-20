@@ -116,10 +116,16 @@ private final class MLXModelStoreSession: InferPeerModelSession, @unchecked Send
     func run(_ request: InferenceQuery) -> DirectRuntimeEventStream {
         let pair = DirectRuntimeEventStream.makeStream(bufferingPolicy: .bufferingOldest(64))
         let attemptID = Self.identifier(AttemptID.self, prefix: "mlx-attempt")
+        do {
+            try state.begin(attemptID)
+        } catch {
+            pair.continuation.finish(throwing: error)
+            return pair.stream
+        }
         let task = Task { [backend, modelKey, state] in
+            defer { state.finish(attemptID) }
             do {
-                try state.begin(attemptID)
-                defer { state.finish(attemptID) }
+                try Task.checkCancellation()
                 let execution = try Self.execution(
                     request: request,
                     modelKey: modelKey,
@@ -132,9 +138,8 @@ private final class MLXModelStoreSession: InferPeerModelSession, @unchecked Send
                 pair.continuation.finish(throwing: error)
             }
         }
-        pair.continuation.onTermination = { [backend, state] _ in
+        pair.continuation.onTermination = { [backend] _ in
             task.cancel()
-            state.finish(attemptID)
             Task { await backend.cancel(attemptID: attemptID) }
         }
         return pair.stream

@@ -6,6 +6,7 @@ import InferPeerProtocol
 /// Authenticated, fixed-destination v2 session owner with bounded same-endpoint recovery.
 public actor DirectGRPCSessionManager: ResourceSessionManaging {
     struct Session: Sendable {
+        let id: UUID
         let credential: DirectResourceCredential
         let connection: any AuthenticatedDirectResourceRPC
         let incarnation: String

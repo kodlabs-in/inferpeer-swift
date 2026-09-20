@@ -1,3 +1,4 @@
+import Foundation
 import InferPeerCore
 import InferPeerInference
 import InferPeerProtocol
@@ -16,10 +17,57 @@ extension InferPeer {
         if let accepted = try acceptedRun(requestID, specification: specification) {
             return accepted
         }
+        if let pending = pendingAcceptedRuns[requestID] {
+            guard pending.specification == specification else {
+                throw Self.requestConflict()
+            }
+            return try await pending.task.value
+        }
+        return try await acceptNewRun(
+            query,
+            resourceID: resourceId,
+            options: options,
+            requestID: requestID,
+            specification: specification
+        )
+    }
+
+    private func acceptNewRun(
+        _ query: InferenceQuery,
+        resourceID: ResourceID,
+        options: RunOptions,
+        requestID: RequestID,
+        specification: RunSpecification
+    ) async throws -> RunHandle {
         let acceptedOptions = Self.acceptedOptions(options, requestID: requestID)
-        let handle = try await startRun(query, resourceID: resourceId, options: acceptedOptions)
-        acceptedRuns[requestID] = AcceptedRun(specification: specification, handle: handle)
-        return handle
+        let pendingID = UUID()
+        let task = Task {
+            try await self.startRun(
+                query,
+                resourceID: resourceID,
+                options: acceptedOptions
+            )
+        }
+        pendingAcceptedRuns[requestID] = PendingAcceptedRun(
+            id: pendingID,
+            specification: specification,
+            task: task
+        )
+        do {
+            let handle = try await task.value
+            guard pendingAcceptedRuns[requestID]?.id == pendingID else {
+                await handle.cancel()
+                throw CancellationError()
+            }
+            acceptedRuns[requestID] = AcceptedRun(specification: specification, handle: handle)
+            pendingAcceptedRuns[requestID] = nil
+            return handle
+        } catch {
+            if pendingAcceptedRuns[requestID]?.id == pendingID {
+                pendingAcceptedRuns[requestID] = nil
+            }
+            throw error
+        }
     }
 
     /// Prepares one exact model on the selected resource without starting inference.
@@ -144,13 +192,17 @@ extension InferPeer {
     ) throws -> RunHandle? {
         guard let accepted = acceptedRuns[requestID] else { return nil }
         guard accepted.specification == specification else {
-            throw InferPeerError(
-                code: .requestConflict,
-                message: "The request ID already identifies different immutable content",
-                isRetryable: false
-            )
+            throw Self.requestConflict()
         }
         return accepted.handle
+    }
+
+    private static func requestConflict() -> InferPeerError {
+        InferPeerError(
+            code: .requestConflict,
+            message: "The request ID already identifies different immutable content",
+            isRetryable: false
+        )
     }
 
     private func requireLocalExecutor(_ resourceID: ResourceID) throws -> LocalResourceExecutor {

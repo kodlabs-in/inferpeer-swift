@@ -234,7 +234,10 @@ public struct ModelCatalogEntry: Codable, Hashable, Sendable {
 
     /// Total transfer size before protocol overhead.
     public var approximateDownloadBytes: UInt64 {
-        downloadFiles.reduce(0) { $0 + $1.byteCount }
+        downloadFiles.reduce(0) { total, file in
+            let addition = total.addingReportingOverflow(file.byteCount)
+            return addition.overflow ? .max : addition.partialValue
+        }
     }
 
     private static func validate(_ input: EntryValidationInput) throws {
@@ -259,23 +262,51 @@ public struct ModelCatalogEntry: Codable, Hashable, Sendable {
         guard URL(string: manifest.source)?.scheme?.lowercased() == "https" else {
             throw ModelCatalogError.invalidSourceURL
         }
-        let manifestFiles = Dictionary(
-            uniqueKeysWithValues: manifest.files.map {
-                ($0.relativePath, FileIdentity(byteCount: $0.byteCount, digest: $0.sha256))
-            })
-        let downloads = Dictionary(
-            uniqueKeysWithValues: downloadFiles.map {
-                ($0.relativePath, FileIdentity(byteCount: $0.byteCount, digest: $0.sha256))
-            })
+        let downloadBytes = try checkedDownloadBytes(downloadFiles)
+        let manifestFiles = try fileIdentities(manifest.files)
+        let downloads = try fileIdentities(downloadFiles)
         guard manifestFiles == downloads else {
             throw ModelCatalogError.downloadManifestMismatch
         }
-        let downloadBytes = downloadFiles.reduce(0) { $0 + $1.byteCount }
         guard input.requirements.resources.minimumFreeStorageBytes >= downloadBytes else {
             throw ModelCatalogError.insufficientStorageRequirement
         }
         guard metadata.status != .stable || !input.validation.isEmpty else {
             throw ModelCatalogError.stableEntryRequiresValidation
+        }
+    }
+
+    private static func fileIdentities(
+        _ files: [ModelManifestFile]
+    ) throws -> [String: FileIdentity] {
+        var identities: [String: FileIdentity] = [:]
+        for file in files {
+            let identity = FileIdentity(byteCount: file.byteCount, digest: file.sha256)
+            guard identities.updateValue(identity, forKey: file.relativePath) == nil else {
+                throw ModelCatalogError.downloadManifestMismatch
+            }
+        }
+        return identities
+    }
+
+    private static func fileIdentities(
+        _ files: [ModelDownloadFile]
+    ) throws -> [String: FileIdentity] {
+        var identities: [String: FileIdentity] = [:]
+        for file in files {
+            let identity = FileIdentity(byteCount: file.byteCount, digest: file.sha256)
+            guard identities.updateValue(identity, forKey: file.relativePath) == nil else {
+                throw ModelCatalogError.downloadManifestMismatch
+            }
+        }
+        return identities
+    }
+
+    private static func checkedDownloadBytes(_ files: [ModelDownloadFile]) throws -> UInt64 {
+        try files.reduce(0) { total, file in
+            let addition = total.addingReportingOverflow(file.byteCount)
+            guard !addition.overflow else { throw ModelCatalogError.downloadSizeOverflow }
+            return addition.partialValue
         }
     }
 
@@ -344,6 +375,7 @@ public enum ModelCatalogError: Error, Equatable, Sendable {
     case invalidLicenseURL
     case invalidSourceURL
     case downloadManifestMismatch
+    case downloadSizeOverflow
     case insufficientStorageRequirement
     case stableEntryRequiresValidation
     case insecureDownloadURL

@@ -19,8 +19,9 @@ extension DirectGRPCSessionManager {
                 request.assets = uploads.map(\.declaration)
             }
         )
-        let tickets = Dictionary(
-            uniqueKeysWithValues: response.tickets.map { ($0.clientAssetID, $0) }
+        let tickets = try Self.validatedUploadTickets(
+            response,
+            expectedClientIDs: Set(uploads.map(\.clientID))
         )
         var receipts: [InferenceAssetReference] = []
         for asset in prepared {
@@ -41,14 +42,40 @@ extension DirectGRPCSessionManager {
                 )
             )
         }
-        return .vision(
+        return Self.replacingImages(in: vision, with: receipts)
+    }
+
+    private static func replacingImages(
+        in vision: VisionInferenceQuery,
+        with images: [InferenceAssetReference]
+    ) -> InferenceQuery {
+        .vision(
             VisionInferenceQuery(
                 model: vision.model,
                 messages: vision.messages,
-                images: receipts,
+                images: images,
                 generation: vision.generation
             )
         )
+    }
+
+    static func validatedUploadTickets(
+        _ response: InferPeer_V2_PrepareAssetsResponse,
+        expectedClientIDs: Set<String>
+    ) throws -> [String: InferPeer_V2_UploadTicket] {
+        var tickets: [String: InferPeer_V2_UploadTicket] = [:]
+        for ticket in response.tickets {
+            guard expectedClientIDs.contains(ticket.clientAssetID),
+                !ticket.ticket.isEmpty,
+                tickets.updateValue(ticket, forKey: ticket.clientAssetID) == nil
+            else {
+                throw InferPeerError(code: .protocolMismatch, isRetryable: false)
+            }
+        }
+        guard Set(tickets.keys) == expectedClientIDs else {
+            throw InferPeerError(code: .protocolMismatch, isRetryable: false)
+        }
+        return tickets
     }
 
     private func upload(

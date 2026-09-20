@@ -47,6 +47,7 @@ extension DirectGRPCSessionManager {
                 throw InferPeerError(code: .protocolMismatch, isRetryable: false)
             }
             return Session(
+                id: UUID(),
                 credential: credential,
                 connection: connection,
                 incarnation: hello.incarnation
@@ -58,7 +59,7 @@ extension DirectGRPCSessionManager {
     }
 
     func invalidate(_ resourceID: ResourceID, matching session: Session) {
-        guard sessions[resourceID]?.incarnation == session.incarnation else { return }
+        guard sessions[resourceID]?.id == session.id else { return }
         sessions[resourceID] = nil
         Task { await session.connection.close() }
     }
