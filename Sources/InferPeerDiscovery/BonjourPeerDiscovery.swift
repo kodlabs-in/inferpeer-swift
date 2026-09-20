@@ -203,7 +203,7 @@ enum ResolutionAttemptRunner {
     }
 }
 
-private enum NWEndpointResolver {
+enum NWEndpointResolver {
     static func resolve(_ endpoint: NWEndpoint, queue: DispatchQueue) async throws -> NWEndpoint {
         let connection = NWConnection(to: endpoint, using: .tcp)
         let waiter = ConnectionStateWaiter()

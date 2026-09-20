@@ -127,6 +127,7 @@ public actor MLXInferenceBackend: InferenceBackend {
 
     /// Starts one serialized attempt and returns a bounded ordered event stream.
     public func generate(_ execution: InferenceExecution) async throws -> GenerationEventStream {
+        try Task.checkCancellation()
         guard activeAttemptID == nil, !isLoadingModel else {
             throw InferenceBackendError.resourceExhausted
         }
@@ -155,8 +156,12 @@ public actor MLXInferenceBackend: InferenceBackend {
     /// Cooperatively cancels the matching active attempt and releases disposable caches.
     public func cancel(attemptID: AttemptID) async {
         guard activeAttemptID == attemptID else { return }
-        generationTask?.cancel()
+        let task = generationTask
+        task?.cancel()
         generationContinuation?.finish(throwing: InferenceBackendError.cancelled)
+        deadlineTask?.cancel()
+        deadlineTask = nil
+        await task?.value
         clearActiveAttempt(attemptID)
     }
     // swiftlint:enable async_without_await
@@ -222,6 +227,7 @@ extension MLXInferenceBackend {
         _ execution: InferenceExecution,
         session: any MLXModelSession
     ) async {
+        defer { clearActiveAttempt(execution.attemptID) }
         do {
             let events = try await session.generate(
                 messages: execution.request.context.messages,
@@ -273,7 +279,6 @@ extension MLXInferenceBackend {
         updateProfile(completion, for: execution.model)
         try yield(.completed(result))
         generationContinuation?.finish()
-        clearActiveAttempt(execution.attemptID)
     }
 
     private func finishReason(_ reason: MLXRuntimeFinishReason) -> GenerationFinishReason {
@@ -293,7 +298,6 @@ extension MLXInferenceBackend {
     private func finish(_ attemptID: AttemptID, throwing error: InferenceBackendError) {
         guard activeAttemptID == attemptID else { return }
         generationContinuation?.finish(throwing: error)
-        clearActiveAttempt(attemptID)
     }
 
     private func clearActiveAttempt(_ attemptID: AttemptID) {
@@ -323,7 +327,7 @@ extension MLXInferenceBackend {
         guard activeAttemptID == attemptID else { return }
         generationTask?.cancel()
         generationContinuation?.finish(throwing: InferenceBackendError.deadlineExceeded)
-        clearActiveAttempt(attemptID)
+        deadlineTask = nil
     }
 
     private func updateLoadDuration(_ duration: Duration, for model: ModelReference) {

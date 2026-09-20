@@ -144,6 +144,9 @@ extension SQLiteJobStoreTests {
                 "v2_caller_replay_state",
                 "v3_retained_terminal_result",
                 "v4_conversation_revisions",
+                "v5_direct_request_metadata",
+                "v6_direct_asset_records",
+                "v7_verified_model_manifests",
             ]
         )
     }

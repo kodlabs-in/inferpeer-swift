@@ -62,6 +62,16 @@ public final class BonjourServiceAdvertiser: NSObject, @preconcurrency NetServic
 
     /// Publishes only the protocol version as non-sensitive TXT metadata.
     public func start(protocolVersion: String = "1") throws {
+        try start(txtRecord: ["v": Data(protocolVersion.utf8)])
+    }
+
+    /// Publishes the bounded v2 direct-resource discovery hints.
+    public func startDirect(metadata: DirectBonjourAdvertisementMetadata) throws {
+        let record = DirectBonjourTXTRecord(metadata: metadata)
+        try start(txtRecord: record.dictionary)
+    }
+
+    private func start(txtRecord: [String: Data]) throws {
         guard service == nil else { throw PeerDiscoveryError.advertisementAlreadyActive }
         let service = NetService(
             domain: "local.",
@@ -70,7 +80,7 @@ public final class BonjourServiceAdvertiser: NSObject, @preconcurrency NetServic
             port: Int32(port)
         )
         service.delegate = self
-        service.setTXTRecord(NetService.data(fromTXTRecord: ["v": Data(protocolVersion.utf8)]))
+        service.setTXTRecord(NetService.data(fromTXTRecord: txtRecord))
         self.service = service
         publishService(service)
     }

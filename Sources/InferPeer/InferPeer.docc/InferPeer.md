@@ -1,69 +1,91 @@
 # ``InferPeer``
 
-Build private, text-only inference flows across explicitly trusted Apple devices on an approved
-local Wi-Fi network.
+Run private local AI on the exact local or approved nearby Apple resource selected by the host app.
 
 ## Overview
 
-InferPeer is a dependency-injected facade over focused protocol, coordinator, persistence,
-discovery, security, transport, telemetry, and inference modules. A host application chooses its
-roles and owns UI, operating-system permissions, lifecycle notifications, storage locations,
-pairing approval, and model files.
+InferPeer is a dependency-injected direct-resource facade over focused protocol, persistence,
+discovery, security, transport, telemetry, and inference modules. A host application owns UI,
+operating-system permissions, lifecycle notifications, storage locations, pairing approval, exact
+resource selection, and model files.
 
 The package does not start itself, download models, install a daemon, or silently switch to a
 cloud transport. `InferPeerMLX` is a separate opt-in product and is not linked by the `InferPeer`
-facade.
+facade. A run targeting `.local` stays in process; a remote run is sent only to its selected
+authenticated resource and is never rerouted automatically.
 
-## Create a caller configuration
+## Configure the local resource
 
-Import the facade product and enable only the roles the host intends to use:
+Construct a stopped facade with explicit local identity, runtime, and verified model artifacts:
 
 ```swift
 import InferPeer
+import InferPeerMLX
 
-let configuration = try InferPeerNodeConfiguration(roles: [.caller])
+let inferPeer = try InferPeer(
+    configuration: InferPeerConfiguration(
+        localResource: LocalResourceConfiguration(
+            displayName: "This Mac",
+            platform: platform
+        ),
+        localRuntime: MLXInferenceBackend(),
+        localModels: [verifiedArtifact],
+        defaultTextModel: verifiedArtifact.descriptor.reference
+    )
+)
 ```
 
-Construct an ``InferPeerNode`` with explicit ``InferPeerDependencies``. A caller dependency graph
-must include a durable `InferPeerCallerOutbox`; joining fails before use when it is absent.
+Construction does not open sockets or load a model. Hosts that only consume remote resources can
+omit the local runtime and avoid linking an engine adapter.
 
-## Caller lifecycle
+For vision, transcription, or speech, inject a `DirectInferenceRuntime`, declare the exact
+`localModelTasks` for every registered artifact, and configure any `defaultModels` explicitly.
+InferPeer resolves a task default before admission and reports the exact selected model. A runtime
+result for a different model or modality is rejected instead of being silently accepted.
 
-After the host starts the node and obtains an approved invitation, it can join, submit an immutable
-context snapshot, and consume durable events:
+## Run on one exact resource
+
+Create an immutable typed query and select `.local` or one paired resource ID:
 
 ```swift
-try await node.start()
-_ = try await node.join(invitation)
+let handle = try await inferPeer.run(
+    .text(
+        model: .exact(modelKey),
+        messages: [.user("Hello")]
+    ),
+    resourceId: .local
+)
 
-let handle = try await node.submit(request)
-let events = try await node.events(requestID: handle.requestID)
-
-for try await event in events {
-    // Persist or render the event before acknowledging its cursor.
-    try await node.acknowledge(requestID: event.requestID, through: event.cursor)
+for try await event in handle.events {
+    // Render ordered, bounded progress and output.
 }
+let result = try await handle.result()
 ```
 
-Call ``InferPeerNode/leaveCoordinator()`` to close joined caller and worker sessions while keeping
-the node started for an explicit rejoin. Call ``InferPeerNode/stop()`` when the host no longer wants
-the package to own network or execution resources.
+`result()` is independent of event iteration. `cancel()` targets only the selected resource.
+`stop()` shuts down discovery, exposure, sessions, queued or running local work, and loaded local
+model state owned by this facade.
 
-## Mobile lifecycle
+## Discovery and exposure
 
-The host must call `setParticipation(.unavailable)` before an iPhone or iPad enters the background
-and refresh status when it returns to the foreground. The worker cancels active inference when it
-becomes unavailable; the coordinator also relies on heartbeat expiry because suspension may prevent
-the final status message from being delivered.
+`discovery()` returns a reference-counted event subscription for untrusted candidates. Pairing
+promotes a candidate into an authenticated `ResourceID`. `expose()` is independent: it binds the
+injected authenticated endpoint before its real listening port is advertised. A device does not
+become a resource merely because another device is browsing.
+
+The host must withdraw mobile availability before losing its execution grant and request the local
+network, media, and background permissions needed by the features it actually enables.
+
+Direct sessions remain pinned to one endpoint identity. Ambiguous acceptance is reconciled with
+that same endpoint, and output resumes from an acknowledged sequence within bounded replay and
+disconnect-grace budgets. Expired replay is a typed failure; it never causes an automatic run on a
+different resource.
 
 ## Topics
 
-### Node facade
+### Direct-resource facade
 
-- ``InferPeerNode``
-- ``InferPeerNodeConfiguration``
-- ``InferPeerDependencies``
-- ``InferPeerOptionalServices``
-- ``InferPeerRequestHandle``
-- ``InferPeerRequestEvent``
-- ``InferPeerCommandRejection``
+- ``InferPeer``
+- ``InferPeerConfiguration``
+- ``LocalResourceConfiguration``
+- ``RunHandle``

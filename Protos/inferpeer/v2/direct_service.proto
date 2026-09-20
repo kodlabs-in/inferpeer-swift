@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package inferpeer.v2;
+
+import "inferpeer/v2/direct.proto";
+
+option swift_prefix = "InferPeer_V2_";
+
+// DirectResourceService addresses exactly one authenticated resource endpoint.
+service DirectResourceService {
+  rpc Pair(PairRequest) returns (PairResponse);
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc WatchResource(WatchResourceRequest) returns (stream WatchResourceResponse);
+  rpc PrepareAssets(PrepareAssetsRequest) returns (PrepareAssetsResponse);
+  rpc UploadAsset(stream UploadAssetRequest) returns (UploadAssetResponse);
+  rpc GetUploadStatus(GetUploadStatusRequest) returns (GetUploadStatusResponse);
+  rpc ReadAsset(ReadAssetRequest) returns (stream ReadAssetResponse);
+  rpc PrepareModel(PrepareModelRequest) returns (stream PrepareModelResponse);
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+  rpc WatchRun(stream WatchRunRequest) returns (stream WatchRunResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+  rpc ReleaseAsset(ReleaseAssetRequest) returns (ReleaseAssetResponse);
+}

@@ -28,6 +28,15 @@ enum StorageSchema {
             try createConversationRevisions(in: database)
             try populateConversationRevisions(in: database)
         }
+        migrator.registerMigration("v5_direct_request_metadata") { database in
+            try createDirectRequestMetadata(in: database)
+        }
+        migrator.registerMigration("v6_direct_asset_records") { database in
+            try createDirectAssetRecords(in: database)
+        }
+        migrator.registerMigration("v7_verified_model_manifests") { database in
+            try createVerifiedModelManifests(in: database)
+        }
         return migrator
     }
 
@@ -157,6 +166,62 @@ enum StorageSchema {
                     """,
                 arguments: [request.callerID, context.conversationID.rawValue, revision]
             )
+        }
+    }
+
+    private static func createDirectRequestMetadata(in database: Database) throws {
+        try database.create(table: "directRequestMetadata") { table in
+            table.column("requestID", .text).primaryKey()
+            table.column("principalID", .text).notNull()
+            table.column("resourceID", .text).notNull()
+            table.column("specificationDigest", .blob).notNull()
+            table.column("modelID", .text).notNull()
+            table.column("modelRevision", .text).notNull()
+            table.column("state", .text).notNull()
+            table.column("processIncarnation", .text).notNull()
+            table.column("originalTimeoutMilliseconds", .text).notNull()
+            table.column("acceptedAt", .datetime).notNull()
+            table.column("updatedAt", .datetime).notNull()
+            table.column("terminalAt", .datetime)
+        }
+        try database.create(
+            index: "directRequestsByPrincipalAndState",
+            on: "directRequestMetadata",
+            columns: ["principalID", "state", "acceptedAt"]
+        )
+    }
+
+    private static func createDirectAssetRecords(in database: Database) throws {
+        try database.create(table: "directAssetRecord") { table in
+            table.column("ticket", .text).primaryKey()
+            table.column("ownerID", .text).notNull()
+            table.column("expectedByteCount", .text).notNull()
+            table.column("expectedSHA256", .blob).notNull()
+            table.column("mediaType", .text).notNull()
+            table.column("expiresAt", .datetime).notNull()
+            table.column("durableOffset", .text).notNull()
+            table.column("fileName", .text).notNull()
+            table.column("receipt", .text).unique()
+            table.column("isComplete", .boolean).notNull()
+            table.column("createdAt", .datetime).notNull()
+            table.column("updatedAt", .datetime).notNull()
+        }
+        try database.create(
+            index: "directAssetsByOwnerAndExpiry",
+            on: "directAssetRecord",
+            columns: ["ownerID", "expiresAt"]
+        )
+    }
+
+    private static func createVerifiedModelManifests(in database: Database) throws {
+        try database.create(table: VerifiedModelManifestRecord.databaseTableName) { table in
+            table.column("modelID", .text).notNull()
+            table.column("revision", .text).notNull()
+            table.column("manifestDigest", .blob).notNull()
+            table.column("manifestData", .blob).notNull()
+            table.column("directoryPath", .text).notNull()
+            table.column("registeredAt", .datetime).notNull()
+            table.primaryKey(["modelID", "revision"])
         }
     }
 }

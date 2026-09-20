@@ -5,4 +5,5 @@ mapping {
   proto_file_path: "inferpeer/v1/inference.proto"
   proto_file_path: "inferpeer/v1/session.proto"
   proto_file_path: "inferpeer/v1/status.proto"
+  proto_file_path: "inferpeer/v2/direct.proto"
 }

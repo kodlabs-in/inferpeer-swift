@@ -17,7 +17,11 @@ let package = Package(
         .library(name: "InferPeerDiscovery", targets: ["InferPeerDiscovery"]),
         .library(name: "InferPeerSecurity", targets: ["InferPeerSecurity"]),
         .library(name: "InferPeerTelemetry", targets: ["InferPeerTelemetry"]),
+        .library(name: "InferPeerModelStore", targets: ["InferPeerModelStore"]),
+        .library(name: "InferPeerApple", targets: ["InferPeerApple"]),
         .library(name: "InferPeerMLX", targets: ["InferPeerMLX"]),
+        .library(name: "InferPeerLlama", targets: ["InferPeerLlama"]),
+        .library(name: "InferPeerWhisperKit", targets: ["InferPeerWhisperKit"]),
         .library(name: "InferPeer", targets: ["InferPeer"]),
     ],
     dependencies: [
@@ -70,6 +74,10 @@ let package = Package(
             .upToNextMinor(from: "1.3.3")
         ),
         .package(
+            url: "https://github.com/argmaxinc/argmax-oss-swift.git",
+            exact: "1.1.0"
+        ),
+        .package(
             url: "https://github.com/swiftlang/swift-docc-plugin",
             .upToNextMajor(from: "1.5.0")
         ),
@@ -103,6 +111,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "X509", package: "swift-certificates"),
+                .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
         .target(
@@ -112,6 +121,7 @@ let package = Package(
                 "InferPeerInference",
                 "InferPeerProtocol",
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
         ),
@@ -132,14 +142,60 @@ let package = Package(
             dependencies: ["InferPeerCore", "InferPeerInference", "InferPeerProtocol"]
         ),
         .target(
+            name: "InferPeerModelStore",
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
+                "InferPeerGRPC",
+                "InferPeerSecurity",
+                "InferPeerStorage",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .target(
+            name: "InferPeerApple",
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerModelStore",
+            ]
+        ),
+        .target(
             name: "InferPeerMLX",
             dependencies: [
+                "InferPeerCore",
                 "InferPeerInference",
+                "InferPeerModelStore",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
+            ]
+        ),
+        .target(
+            name: "InferPeerLlamaBridge",
+            dependencies: ["LlamaFramework"],
+            publicHeadersPath: "include",
+            cxxSettings: [.unsafeFlags(["-std=c++17"])]
+        ),
+        .target(
+            name: "InferPeerLlama",
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerLlamaBridge",
+                "InferPeerModelStore",
+            ]
+        ),
+        .target(
+            name: "InferPeerWhisperKit",
+            dependencies: [
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerModelStore",
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ]
         ),
         .target(
@@ -153,6 +209,7 @@ let package = Package(
                 "InferPeerDiscovery",
                 "InferPeerSecurity",
                 "InferPeerTelemetry",
+                "InferPeerModelStore",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
@@ -169,6 +226,8 @@ let package = Package(
                 "InferPeerDiscovery",
                 "InferPeerSecurity",
                 "InferPeerTelemetry",
+                "InferPeerModelStore",
+                "InferPeerApple",
                 "InferPeerMLX",
             ]
         ),
@@ -234,8 +293,41 @@ let package = Package(
             dependencies: ["InferPeerTelemetry", "InferPeerCore", "InferPeerInference"]
         ),
         .testTarget(
+            name: "InferPeerModelStoreTests",
+            dependencies: [
+                "InferPeer",
+                "InferPeerModelStore",
+                "InferPeerCore",
+                "InferPeerInference",
+                "InferPeerProtocol",
+                "InferPeerGRPC",
+                "InferPeerSecurity",
+                "InferPeerStorage",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .testTarget(
             name: "InferPeerMLXTests",
             dependencies: ["InferPeerMLX", "InferPeerInference", "InferPeerProtocol"]
+        ),
+        .testTarget(
+            name: "InferPeerLlamaTests",
+            dependencies: [
+                "InferPeerLlama",
+                "InferPeerInference",
+                "InferPeerModelStore",
+                "InferPeerProtocol",
+            ]
+        ),
+        .testTarget(
+            name: "InferPeerWhisperKitTests",
+            dependencies: [
+                "InferPeerWhisperKit",
+                "InferPeerInference",
+                "InferPeerModelStore",
+                "InferPeerProtocol",
+            ]
         ),
         .testTarget(
             name: "InferPeerFacadeTests",
@@ -248,6 +340,12 @@ let package = Package(
                 "InferPeerStorage",
                 "InferPeerTelemetry",
             ]
+        ),
+        .binaryTarget(
+            name: "LlamaFramework",
+            url:
+                "https://github.com/ggml-org/llama.cpp/releases/download/b10982/llama-b10982-xcframework.zip",
+            checksum: "a37d89f31a4bafecf6e5b619f0fb6c4d1783adcd1e475e976d52f98396a2c864"
         ),
     ]
 )

@@ -2,10 +2,18 @@ import Foundation
 import InferPeerCore
 import Network
 
-struct LANEndpointValidator: Sendable {
-    let permitsLoopback: Bool
+/// Rejects hostnames and public addresses before a direct LAN connection is opened.
+public struct LANEndpointValidator: Sendable {
+    /// Whether loopback is accepted for local integration testing.
+    public let permitsLoopback: Bool
 
-    func validate(_ endpoint: PeerEndpoint) throws -> PeerEndpoint {
+    /// Creates a numeric local-network endpoint validator.
+    public init(permitsLoopback: Bool = false) {
+        self.permitsLoopback = permitsLoopback
+    }
+
+    /// Returns the same endpoint after validating its numeric address scope.
+    public func validate(_ endpoint: PeerEndpoint) throws -> PeerEndpoint {
         let address = endpoint.host.split(separator: "%", maxSplits: 1).first.map(String.init)
         guard let address else { throw PeerDiscoveryError.numericAddressRequired }
 
